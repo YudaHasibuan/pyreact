@@ -1,0 +1,37 @@
+# broken_demo.pyreact — File dengan sengaja ada syntax error
+# untuk menguji fitur --heal
+
+server {
+
+    def greet(name)
+        return {"msg": f"Hello {name}"}
+
+    def get_items()
+        return {"items": ["alpha", "beta", "gamma"]}
+
+}
+
+component Home():
+
+    msg, setMsg = use_state(None)
+    name, setName = use_state("")
+
+    def fetchGreeting()
+        result = server.greet(name)
+        setMsg(result)
+
+    return (
+        <UI.Page>
+            <UI.Navbar title="Broken Demo" />
+            <UI.Card title="Test">
+                <UI.Input label="Name" value={name} onChange={setName} />
+                <UI.Button onClick={fetchGreeting}>Greet</UI.Button>
+                {msg && <UI.Alert type="success">{msg.msg}</UI.Alert>}
+            </UI.Card>
+        </UI.Page>
+    )
+
+style {
+    primary = "#6366f1"
+    font    = "Inter"
+}

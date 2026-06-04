@@ -1,0 +1,211 @@
+# demo_routing.pyreact — Demo Fase 16: File-System Routing & Nested Pages
+
+shared_state {
+    current_user = None
+    is_loading = False
+}
+
+server {
+    def get_user(user_id):
+        users = {
+            "1": {"id": "1", "name": "Budi Santoso", "role": "admin"},
+            "2": {"id": "2", "name": "Ani Rahayu",  "role": "user"},
+        }
+        return users.get(user_id, {"error": "User not found"})
+
+    def get_posts():
+        return [
+            {"id": 1, "title": "Mengenal PyReact",      "author": "Budi"},
+            {"id": 2, "title": "Routing di PyReact",    "author": "Ani"},
+            {"id": 3, "title": "Self-Healing Compiler", "author": "Budi"},
+        ]
+}
+
+pages {
+    Home      = "/"
+    About     = "/about"
+    Blog      = "/blog"
+    Dashboard = "/dashboard" [guard]
+    Settings  = "/settings"  [guard]
+    Login     = "/login"
+}
+
+component Home():
+    posts, setPosts = use_state(None)
+
+    def loadPosts():
+        data = server.get_posts()
+        setPosts(data)
+
+    return (
+        <UI.Page>
+            <UI.Navbar title="PyReact App" />
+            <div className="pt-24 max-w-5xl mx-auto px-6">
+                <UI.Heading>Selamat Datang di PyReact</UI.Heading>
+                <UI.Text className="mt-2 text-gray-400">
+                    Framework fullstack Python + React dalam satu file.
+                </UI.Text>
+
+                <div className="mt-6 flex gap-3 flex-wrap">
+                    <a href="/blog"
+                       onClick="(e) => { e.preventDefault(); window.history.pushState(null,'','/blog'); window.dispatchEvent(new PopStateEvent('popstate')); }"
+                       className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-sm font-semibold transition">
+                        Lihat Blog
+                    </a>
+                    <a href="/dashboard"
+                       className="px-5 py-2.5 bg-white/10 hover:bg-white/20 text-white rounded-xl text-sm font-semibold transition border border-white/10">
+                        Dashboard (Protected)
+                    </a>
+                </div>
+
+                <div className="mt-10">
+                    <UI.Button onClick={loadPosts}>Muat Posts</UI.Button>
+                    {posts && (
+                        <div className="mt-4 grid gap-4">
+                            {posts.map(p => (
+                                <UI.Card key={p.id} title={p.title}>
+                                    <UI.Text>Oleh: {p.author}</UI.Text>
+                                </UI.Card>
+                            ))}
+                        </div>
+                    )}
+                </div>
+            </div>
+        </UI.Page>
+    )
+
+component About():
+    return (
+        <UI.Page>
+            <UI.Navbar title="Tentang PyReact" />
+            <div className="pt-24 max-w-3xl mx-auto px-6">
+                <UI.Heading>Tentang PyReact</UI.Heading>
+                <UI.Text className="mt-4 text-gray-300 leading-relaxed">
+                    PyReact adalah bahasa pemrograman fullstack inovatif yang memungkinkan
+                    developer membangun aplikasi web lengkap dalam satu file .pyreact.
+                </UI.Text>
+                <div className="mt-6 grid md:grid-cols-3 gap-4">
+                    <UI.Card title="Flask Backend">
+                        <UI.Text>Auto-generate Python Flask API dengan routing lengkap.</UI.Text>
+                    </UI.Card>
+                    <UI.Card title="React Frontend">
+                        <UI.Text>Kompilasi JSX + Tailwind CSS secara otomatis.</UI.Text>
+                    </UI.Card>
+                    <UI.Card title="Self-Healing">
+                        <UI.Text>AI auto-fix syntax error via Ollama lokal.</UI.Text>
+                    </UI.Card>
+                </div>
+            </div>
+        </UI.Page>
+    )
+
+component Blog():
+    posts, setPosts = use_state(None)
+    loading, setLoading = use_state(False)
+
+    def fetchPosts():
+        setLoading(True)
+        data = server.get_posts()
+        setPosts(data)
+        setLoading(False)
+
+    return (
+        <UI.Page>
+            <UI.Navbar title="Blog PyReact" />
+            <div className="pt-24 max-w-4xl mx-auto px-6">
+                <div className="flex items-center justify-between mb-6">
+                    <UI.Heading>Blog</UI.Heading>
+                    <UI.Button onClick={fetchPosts}>Refresh</UI.Button>
+                </div>
+                {loading && <UI.Spinner />}
+                {posts && (
+                    <div className="grid gap-4">
+                        {posts.map(p => (
+                            <UI.Card key={p.id} title={p.title}>
+                                <UI.Badge color="blue">{p.author}</UI.Badge>
+                            </UI.Card>
+                        ))}
+                    </div>
+                )}
+                {!posts && !loading && (
+                    <UI.Alert type="info">Klik Refresh untuk memuat artikel.</UI.Alert>
+                )}
+            </div>
+        </UI.Page>
+    )
+
+component Dashboard():
+    user, setUser = use_state(None)
+
+    def loadMe():
+        data = server.get_user("1")
+        setUser(data)
+
+    return (
+        <UI.Page>
+            <UI.Navbar title="Dashboard" />
+            <div className="pt-24 max-w-5xl mx-auto px-6">
+                <UI.Heading>Dashboard</UI.Heading>
+                <UI.Alert type="warning" className="mt-4">
+                    Halaman ini membutuhkan autentikasi. (Protected Route)
+                </UI.Alert>
+                <div className="mt-6">
+                    <UI.Button onClick={loadMe}>Muat User</UI.Button>
+                    {user && (
+                        <UI.Card title="User Info" className="mt-4">
+                            <UI.Text>Nama: {user.name}</UI.Text>
+                            <UI.Badge color="green">{user.role}</UI.Badge>
+                        </UI.Card>
+                    )}
+                </div>
+            </div>
+        </UI.Page>
+    )
+
+component Settings():
+    return (
+        <UI.Page>
+            <UI.Navbar title="Settings" />
+            <div className="pt-24 max-w-3xl mx-auto px-6">
+                <UI.Heading>Pengaturan</UI.Heading>
+                <UI.Card title="Preferensi" className="mt-6">
+                    <UI.Text>Pengaturan akun dan preferensi aplikasi.</UI.Text>
+                </UI.Card>
+            </div>
+        </UI.Page>
+    )
+
+component Login():
+    username, setUsername = use_state("")
+    password, setPassword = use_state("")
+    error, setError = use_state(None)
+
+    def handleLogin():
+        if username and password:
+            import localStorage
+            localStorage.setItem("pyreact_token", "demo_token_123")
+            window.location.pathname = "/dashboard"
+        else:
+            setError("Username dan password tidak boleh kosong.")
+
+    return (
+        <UI.Page>
+            <div className="min-h-screen flex items-center justify-center p-4">
+                <UI.Card title="Login ke PyReact" className="w-full max-w-sm">
+                    <div className="flex flex-col gap-4">
+                        <UI.Input label="Username" value={username} onChange={setUsername} placeholder="admin" />
+                        <UI.Input label="Password" value={password} onChange={setPassword} type="password" placeholder="••••••" />
+                        {error && <UI.Alert type="error">{error}</UI.Alert>}
+                        <UI.Button onClick={handleLogin}>Masuk</UI.Button>
+                    </div>
+                </UI.Card>
+            </div>
+        </UI.Page>
+    )
+
+style {
+    primary   = "#6366f1"
+    secondary = "#4f46e5"
+    font      = "Inter"
+    radius    = "12px"
+}

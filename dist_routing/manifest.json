@@ -1,0 +1,23 @@
+{
+  "pyreact_version": "0.1.0",
+  "generated_at": "2026-06-04T11:45:29.524503Z",
+  "server_functions": [
+    "get_user",
+    "get_posts"
+  ],
+  "components": [
+    "Home",
+    "About",
+    "Blog",
+    "Dashboard",
+    "Settings",
+    "Login"
+  ],
+  "models": [],
+  "style_vars": [
+    "primary",
+    "secondary",
+    "font",
+    "radius"
+  ]
+}

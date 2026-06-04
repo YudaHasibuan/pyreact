@@ -1,0 +1,107 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "PyReact",
+  "scopeName": "source.pyreact",
+  "patterns": [
+    {
+      "comment": "Server Block (Python)",
+      "begin": "\\b(server|realtime)\\b\\s*(\\{)",
+      "beginCaptures": {
+        "1": { "name": "keyword.control.pyreact" },
+        "2": { "name": "punctuation.section.block.begin.pyreact" }
+      },
+      "end": "(\\})",
+      "endCaptures": {
+        "1": { "name": "punctuation.section.block.end.pyreact" }
+      },
+      "contentName": "meta.embedded.block.python",
+      "patterns": [
+        { "include": "source.python" }
+      ]
+    },
+    {
+      "comment": "Component Block (JSX / JS)",
+      "begin": "\\b(component)\\b\\s+([A-Z]\\w*)\\s*(\\([^)]*\\))\\s*(\\{|:)",
+      "beginCaptures": {
+        "1": { "name": "keyword.control.pyreact" },
+        "2": { "name": "entity.name.type.class.pyreact" },
+        "3": { "name": "variable.parameter.function.pyreact" },
+        "4": { "name": "punctuation.section.block.begin.pyreact" }
+      },
+      "end": "(?=\\b(server|component|style|model|database|dependencies|shared_state|realtime)\\b|\\})",
+      "patterns": [
+        { "include": "source.js.jsx" }
+      ]
+    },
+    {
+      "comment": "Style, Database, Shared State blocks",
+      "begin": "\\b(style|database|dependencies|shared_state)\\b\\s*(\\{)",
+      "beginCaptures": {
+        "1": { "name": "keyword.control.pyreact" },
+        "2": { "name": "punctuation.section.block.begin.pyreact" }
+      },
+      "end": "(\\})",
+      "endCaptures": {
+        "1": { "name": "punctuation.section.block.end.pyreact" }
+      },
+      "patterns": [
+        {
+          "name": "variable.other.property.pyreact",
+          "match": "\\b[a-zA-Z0-9_]+\\b(?=\\s*=)"
+        },
+        {
+          "include": "#strings"
+        },
+        {
+          "include": "#numbers"
+        }
+      ]
+    },
+    {
+      "include": "#comments"
+    },
+    {
+      "include": "#keywords"
+    }
+  ],
+  "repository": {
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.pyreact",
+          "match": "\\b(server|component|style|model|database|dependencies|shared_state|realtime)\\b"
+        }
+      ]
+    },
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.number-sign.pyreact",
+          "match": "#.*$"
+        }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.double.pyreact",
+          "begin": "\"",
+          "end": "\""
+        },
+        {
+          "name": "string.quoted.single.pyreact",
+          "begin": "'",
+          "end": "'"
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.pyreact",
+          "match": "\\b\\d+(\\.\\d+)?\\b"
+        }
+      ]
+    }
+  }
+}

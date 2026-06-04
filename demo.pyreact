@@ -1,0 +1,146 @@
+# demo.pyreact — AI Image Classifier
+# Demonstrates PyReact MVP: server block, component, PyBridge RPC, style
+
+server {
+
+    import os
+    import base64
+    from io import BytesIO
+
+    def ping():
+        return {"status": "ok", "message": "PyReact backend running!"}
+
+    def classify_image(filename):
+        # Placeholder — swap with real model inference
+        labels = ["cat", "dog", "bird", "car", "tree"]
+        import random
+        label = random.choice(labels)
+        confidence = round(random.uniform(0.75, 0.99), 4)
+        return {
+            "label": label,
+            "confidence": confidence,
+            "filename": filename,
+        }
+
+    def get_stats():
+        return {
+            "total_inferences": 1024,
+            "accuracy": "94.2%",
+            "model": "ResNet-50",
+            "uptime": "3d 4h",
+        }
+
+}
+
+component Classifier():
+
+    result,   setResult   = use_state(None)
+    stats,    setStats    = use_state(None)
+    loading,  setLoading  = use_state(False)
+    filename, setFilename = use_state("")
+    error,    setError    = use_state(None)
+
+    def handleUpload(file):
+        setFilename(file.name)
+        setError(None)
+
+    def runInference():
+        setLoading(True)
+        setError(None)
+        data = server.classify_image(filename)
+        setResult(data)
+        setLoading(False)
+
+    def loadStats():
+        data = server.get_stats()
+        setStats(data)
+
+    return (
+        <UI.Page>
+            <UI.Navbar title="PyReact AI Classifier" />
+
+            <div className="pt-24 max-w-4xl mx-auto px-4">
+
+                <div className="text-center mb-12">
+                    <UI.Heading>AI Image Classifier</UI.Heading>
+                    <UI.Text color="gray-400" className="mt-2">
+                        Upload an image and get instant AI predictions.
+                        Powered by PyBridge™ RPC.
+                    </UI.Text>
+                </div>
+
+                <div className="grid md:grid-cols-2 gap-6">
+
+                    <UI.Card title="Upload & Classify">
+                        <UI.Upload
+                            label="Drop your image here or click to browse"
+                            onFile={handleUpload}
+                            accept="image/*"
+                        />
+                        {filename && (
+                            <UI.Alert type="info" className="mt-3">
+                                Selected: {filename}
+                            </UI.Alert>
+                        )}
+                        <div className="flex gap-3 mt-4">
+                            <UI.Button
+                                onClick={runInference}
+                                loading={loading}
+                                disabled={!filename}
+                            >
+                                Run Inference
+                            </UI.Button>
+                            <UI.Button onClick={loadStats} variant="ghost">
+                                Load Stats
+                            </UI.Button>
+                        </div>
+                    </UI.Card>
+
+                    <UI.Card title="Prediction Result">
+                        {result ? (
+                            <div className="space-y-4">
+                                <div className="text-center py-4">
+                                    <div className="text-5xl font-bold text-blue-400">
+                                        {result.label}
+                                    </div>
+                                    <div className="text-gray-400 mt-2">
+                                        Confidence: {(result.confidence * 100).toFixed(1)}%
+                                    </div>
+                                </div>
+                                <div className="h-2 bg-gray-800 rounded-full overflow-hidden">
+                                    <div
+                                        className="h-full bg-gradient-to-r from-blue-500 to-purple-500 rounded-full transition-all duration-700"
+                                        style={{width: `${result.confidence * 100}%`}}
+                                    />
+                                </div>
+                            </div>
+                        ) : (
+                            <div className="text-center py-8 text-gray-600">
+                                No prediction yet. Upload an image to start.
+                            </div>
+                        )}
+                    </UI.Card>
+
+                </div>
+
+                {stats && (
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-6">
+                        <UI.MetricCard label="Total Inferences" value={stats.total_inferences} />
+                        <UI.MetricCard label="Accuracy"         value={stats.accuracy} trend="↑ +1.2% this week" />
+                        <UI.MetricCard label="Model"            value={stats.model} />
+                        <UI.MetricCard label="Uptime"           value={stats.uptime} trend="99.9% availability" />
+                    </div>
+                )}
+
+            </div>
+        </UI.Page>
+    )
+
+style {
+    primary    = "#2563eb"
+    secondary  = "#7c3aed"
+    background = "#030712"
+    surface    = "#111827"
+    radius     = "16px"
+    font       = "Inter"
+}

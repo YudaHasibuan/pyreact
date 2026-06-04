@@ -1,0 +1,14 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --primary: #6366f1;
+  --secondary: #4f46e5;
+  --font: Inter;
+  --radius: 12px;
+}
+
+body {
+  font-family: "Inter", sans-serif;
+}

@@ -1,0 +1,21 @@
+# broken_demo2.pyreact — Error nyata: component block syntax yang tidak valid
+# Ini akan menyebabkan ParseError karena `component` tanpa nama identifier
+
+component MyComponent():
+
+    msg, setMsg = use_state(None)
+
+    return (
+        <UI.Page>
+            <UI.Text>Hello</UI.Text>
+        </UI.Page>
+    )
+
+server {
+    def ping():
+        return {"ok": True}
+}
+
+style {
+    primary = "#6366f1"
+}

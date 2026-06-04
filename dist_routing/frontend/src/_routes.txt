@@ -1,0 +1,8 @@
+# PyReact Router Manifest (auto-generated)
+
+  /                              -> Home
+  /about                         -> About
+  /blog                          -> Blog
+  /dashboard                     -> Dashboard [GUARD]
+  /settings                      -> Settings [GUARD]
+  /login                         -> Login

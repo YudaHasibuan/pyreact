@@ -1,0 +1,70 @@
+{
+  "name": "pyreact-vscode",
+  "displayName": "PyReact Language Support",
+  "description": "Syntax highlighting, autocomplete, and language features for PyReact (.pyreact) files.",
+  "version": "0.1.0",
+  "publisher": "pyreact",
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "activationEvents": [
+    "onLanguage:pyreact"
+  ],
+  "main": "./src/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "pyreact",
+        "aliases": [
+          "PyReact",
+          "pyreact"
+        ],
+        "extensions": [
+          ".pyreact"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "pyreact",
+        "scopeName": "source.pyreact",
+        "path": "./syntaxes/pyreact.tmLanguage.json"
+      }
+    ],
+    "commands": [
+      {
+        "command": "pyreact.showPreview",
+        "title": "PyReact: Open Live Preview",
+        "category": "PyReact",
+        "icon": "$(browser)"
+      }
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "pyreact.showPreview",
+          "group": "navigation",
+          "when": "resourceLangId == pyreact"
+        }
+      ]
+    },
+    "configuration": {
+      "type": "object",
+      "title": "PyReact Configuration",
+      "properties": {
+        "pyreact.pythonPath": {
+          "type": "string",
+          "default": "python",
+          "description": "Path to the Python interpreter to launch the PyReact Language Server."
+        }
+      }
+    }
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  }
+}
