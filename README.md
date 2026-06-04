@@ -1,34 +1,34 @@
 # PyReact-Web 🚀
 
-**The Python-Powered Fullstack Language** — v1.4.0
+**Bahasa Web Fullstack Modern Bertenaga Python** — v1.4.0
 
-> Build beautiful AI-powered fullstack applications using a single language, a single file, and a single workflow.
+> Bangun aplikasi fullstack bertenaga AI yang indah menggunakan satu bahasa, satu berkas, dan satu alur kerja terpadu.
 
-**PyReact = Python Simplicity + React Power + AI Native Development**
+**PyReact = Kesederhanaan Python + Kekuatan React + Pengembangan AI-Native**
 
 ---
 
-## 📦 Installation & Quick Start
+## 📦 Instalasi & Memulai Cepat
 
-Installing PyReact is now simpler than ever. It is available on PyPI as `pyreact-web`:
+PyReact kini tersedia secara resmi di PyPI dengan nama package `pyreact-web`:
 
 ```bash
-# Install PyReact globally
+# Instal PyReact secara global
 pip install pyreact-web
 
-# Create a new project
+# Buat proyek baru
 pyreact new myapp
 
-# Start Flask + Vite dev servers
+# Masuk ke direktori dan jalankan server pengembangan Flask + Vite
 cd myapp
 pyreact dev
 ```
 
 ---
 
-## One File. Full Stack.
+## Satu Berkas. Stack Utuh (Full Stack).
 
-Here is a simple example showing PyBridge RPC, database schema definition, styles, routing, and PWA capabilities all defined in a single `.pyreact` file:
+Berikut adalah contoh kode sederhana `.pyreact` yang menyatukan definisi database, logika backend RPC, rute halaman, gaya, komponen UI, hingga dukungan PWA offline dalam satu berkas tunggal:
 
 ```pyreact
 database {
@@ -41,7 +41,7 @@ database {
 
 server {
     def forecast(data):
-        # Database ORM, RPC, and AI capabilities
+        # Logika backend Python dengan akses database ORM & AI
         return {"result": [1, 4, 9, 16]}
 }
 
@@ -60,9 +60,9 @@ component Dashboard():
 
     return (
         <UI.Page>
-            <UI.Navbar title="PyReact App" />
+            <UI.Navbar title="Aplikasi PyReact" />
             <UI.NetworkStatus />
-            <UI.Button onClick={runForecast}>Run Forecast</UI.Button>
+            <UI.Button onClick={runForecast}>Jalankan Forecast</UI.Button>
             <UI.Chart type="line" data={result} />
         </UI.Page>
     )
@@ -76,69 +76,69 @@ style {
 
 ---
 
-## ⚡ Key Features (Fase 15 - 23 Complete)
+## ⚡ Fitur Utama (Fase 15 - 23 Selesai)
 
 ### 🩺 Self-Healing Compiler [Fase 15]
-Auto-detects compiler syntax errors and resolves them iteratively using locally hosted LLMs (via Ollama) or remote AI fallbacks. Run compiler healing with:
+Mendeteksi kesalahan sintaksis secara otomatis saat kompilasi dan memperbaikinya secara dinamis menggunakan model AI lokal (via Ollama) atau cadangan cloud.
 ```bash
 pyreact compile app.pyreact --heal
 ```
 
 ### 🗺️ File-System & Declarative Routing [Fase 16]
-Supports Next.js-style file-system routing (e.g. `pages/blog/[slug].pyreact`) and declarative `pages { ... }` routing blocks complete with authorization route guards.
+Mendukung routing deklaratif via blok `pages { ... }` serta routing berbasis struktur folder ala Next.js (contoh: `pages/blog/[slug].pyreact`) lengkap dengan otorisasi rute (*route guards*).
 
-### 🛡️ Type System & Validation [Fase 17]
-Enforces type safety with Python type annotations and decorators like `@validate` to validate incoming requests and ORM mutations.
+### 🛡️ Type System & Validasi [Fase 17]
+Menjamin keamanan tipe data dengan anotasi tipe bawaan Python serta decorator seperti `@validate` untuk memvalidasi masukan kueri sebelum disimpan ke database.
 
-### 🔄 Real-time Synchronization [Fase 18]
-Two-way server-client data synchronization utilizing WebSocket or Server-Sent Events (SSE) channels, with automated connection lifecycle management.
+### 🔄 Sinkronisasi Real-time [Fase 18]
+Sinkronisasi data dua arah antara backend dan klien secara instan menggunakan jalur WebSocket atau Server-Sent Events (SSE).
 
-### 🧪 Integrated Testing Suite [Fase 19]
-Perform component unit tests, API tests, and complete Playwright-driven end-to-end integration tests using a single testing module:
+### 🧪 Framework Pengujian Terintegrasi [Fase 19]
+Lakukan pengujian unit komponen, pengujian API backend, hingga pengujian fungsional *End-to-End* (E2E) berbasis Playwright hanya dengan satu perintah:
 ```bash
 pyreact test
 ```
 
-### 💻 VS Code Extension [Fase 20]
-Complete developer tooling including syntax highlighting for `.pyreact` files, IntelliSense autocomplete, error diagnostics, and a live preview panel.
+### 💻 Ekstensi VS Code [Fase 20]
+Peralatan editor lengkap mulai dari *syntax highlighting* berkas `.pyreact`, autocomplete berbasis LSP (Language Server Protocol), diagnosa eror inline, hingga panel *live preview* terintegrasi.
 
-### ☁️ PyReact Cloud Deployment [Fase 21]
-One-command production deployment to the PyReact Cloud cluster, including secrets management, domains, and a live web dashboard:
+### ☁️ Deployment PyReact Cloud [Fase 21]
+Unggah aplikasi produksi Anda ke klaster PyReact Cloud dengan satu baris perintah, lengkap dengan manajemen domain kustom, sertifikat SSL, dan dasbor analitik:
 ```bash
 pyreact deploy
 ```
 
 ### 🌐 Hybrid Server-Side Rendering (SSR) [Fase 22]
-Zero-dependency pre-rendering of client JSX directly in Python on Flask or FastAPI (no Node.js runtime required), coupled with client hydration via `ReactDOM.hydrateRoot`.
+Pre-rendering kode JSX frontend langsung dari sisi server Python (Flask/FastAPI) tanpa memerlukan runtime Node.js eksternal, dikombinasikan dengan hidrasi klien dinamis via `ReactDOM.hydrateRoot`.
 
 ### 📴 Offline-First PWA & Background Sync [Fase 23]
-- **Web App Manifest & SW**: Auto-generates `manifest.json` and a caching Service Worker (`sw.js`).
-- **Offline RPC Queue**: Queues client calls to `server.*` when the device is offline and automatically replays them when connectivity is restored.
-- **Local State Caching**: Persists your shared state automatically using LocalStorage.
-- **UI Network Status Indicator**: Live status checking via the built-in `<UI.NetworkStatus />` component.
+- **Web App Manifest & Service Worker**: Pembuatan otomatis `manifest.json` dan `sw.js` untuk membuat aplikasi web dapat diinstal di HP/Desktop dan diakses tanpa koneksi internet.
+- **Offline RPC Queue**: Menyimpan panggilan fungsi `server.*` saat perangkat luring (offline) ke dalam antrean, lalu memutarnya kembali secara otomatis saat terhubung kembali (online).
+- **Local State Caching**: Menyimpan status state komponen (`shared_state`) secara otomatis ke LocalStorage.
+- **Indikator Jaringan**: Menampilkan status koneksi real-time melalui komponen bawaan `<UI.NetworkStatus />`.
 
 ---
 
-## 🗺️ Roadmap & Project Status
+## 🗺️ Peta Jalan & Status Proyek (Roadmap)
 
-| Phase | Feature | Status |
+| Fase | Fitur | Status |
 |---|---|---|
-| **1–14** | Lexer, Parser, AST, RPC, DB ORM, AI Agents, PPR Registry | ✅ Completed |
-| **15** | Self-Healing Compiler (AI-powered) | ✅ Completed |
-| **16** | File-System & Pages Routing | ✅ Completed |
-| **17** | Type System & Request Validation | ✅ Completed |
-| **18** | Real-Time Sync & WebSocket Client | ✅ Completed |
-| **19** | E2E Testing Framework (Playwright) | ✅ Completed |
-| **20** | VS Code Extension (Syntax, LSP, Live Preview) | ✅ Completed |
-| **21** | One-Command Cloud Deploy & Dashboard | ✅ Completed |
-| **22** | Hybrid Server-Side Rendering (SSR) | ✅ Completed |
-| **23** | Offline-First PWA & Background Sync | ✅ Completed |
-| **24** | Real-time Collaborative State & WebSockets | 🔲 Planned |
-| **25** | GraphQL API Engine & Type-Safe Queries | 🔲 Planned |
-| **26** | RBAC (Role-Based Access Control) & Guards | 🔲 Planned |
+| **1–14** | Lexer, Parser, AST, RPC, DB ORM, AI Agents, PPR Registry | ✅ Selesai |
+| **15** | Self-Healing Compiler (Bertenaga AI) | ✅ Selesai |
+| **16** | File-System & Pages Routing | ✅ Selesai |
+| **17** | Type System & Validasi Request | ✅ Selesai |
+| **18** | Real-Time Sync & Client WebSocket | ✅ Selesai |
+| **19** | Framework Pengujian E2E (Playwright) | ✅ Selesai |
+| **20** | Ekstensi VS Code (Sintaks, LSP, Live Preview) | ✅ Selesai |
+| **21** | One-Command Cloud Deploy & Dasbor Analitik | ✅ Selesai |
+| **22** | Hybrid Server-Side Rendering (SSR) | ✅ Selesai |
+| **23** | Offline-First PWA & Background Sync | ✅ Selesai |
+| **24** | Real-time Collaborative State & WebSockets | 🔲 Direncanakan |
+| **25** | GraphQL API Engine & Type-Safe Queries | 🔲 Direncanakan |
+| **26** | RBAC (Role-Based Access Control) & Guards | 🔲 Direncanakan |
 
 ---
 
-## 📄 License
+## 📄 Lisensi
 
 MIT © Yuda Hasibuan
