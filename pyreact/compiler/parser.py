@@ -21,6 +21,17 @@ class ProgramNode:
     pipelines:    List["PipelineNode"]          = field(default_factory=list)
     pages:        Optional["PagesBlock"]        = None
     realtime:     Optional["RealtimeBlock"]     = None
+    graphql:      Optional["GraphQLBlock"]      = None
+    rbac:         Optional["RBACBlock"]         = None
+    webrtc:       Optional["WebRTCBlock"]       = None
+
+
+@dataclass
+class WebRTCBlock:
+    """Fase 27 – WebRTC P2P & Audio/Video Streaming."""
+    signaling: str = "websockets"
+    codecs: List[str] = field(default_factory=list)
+    raw: str = ""
 
 
 @dataclass
@@ -29,6 +40,24 @@ class RealtimeBlock:
     channels: List[str] = field(default_factory=list)
     raw: str = ""
     functions: List["FuncDef"] = field(default_factory=list)
+
+
+@dataclass
+class GraphQLBlock:
+    """Fase 25 – GraphQL API Engine."""
+    types: Dict[str, Dict[str, str]] = field(default_factory=dict)       # TypeName -> {field: type}
+    queries: Dict[str, str] = field(default_factory=dict)                 # queryName -> resolver_func
+    mutations: Dict[str, str] = field(default_factory=dict)               # mutationName -> resolver_func
+    raw: str = ""
+
+
+@dataclass
+class RBACBlock:
+    """Fase 26 – Role-Based Access Control."""
+    roles: List[str] = field(default_factory=list)                        # ['admin','user','guest']
+    permissions: Dict[str, List[str]] = field(default_factory=dict)       # role -> [endpoint,...]
+    default_role: str = "guest"
+    raw: str = ""
 
 
 @dataclass
@@ -173,6 +202,12 @@ class Parser:
                 prog.pages = self._parse_pages()
             elif t.type == TT.REALTIME:
                 prog.realtime = self._parse_realtime()
+            elif t.type == TT.GRAPHQL:
+                prog.graphql = self._parse_graphql()
+            elif t.type == TT.RBAC:
+                prog.rbac = self._parse_rbac()
+            elif t.type == TT.WEBRTC:
+                prog.webrtc = self._parse_webrtc()
             else:
                 self._adv()
         return prog
@@ -567,4 +602,97 @@ class Parser:
                 body = "\n".join(ast.unparse(stmt) for stmt in node.body)
                 rb.functions.append(FuncDef(name=node.name, params=params, body=body))
 
+
+    # ── graphql ───────────────────────────────────────────────────────────────
+    def _parse_graphql(self) -> "GraphQLBlock":
+        self._expect(TT.GRAPHQL)
+        self._expect(TT.LBRACE)
+        raw = self._expect(TT.RAW_PYTHON).value if self._match(TT.RAW_PYTHON) else ""
+        self._expect(TT.RBRACE)
+        from .parser import GraphQLBlock
+        gb = GraphQLBlock(raw=raw)
+
+        # Parse type definitions: type TypeName { field: Type }
+        for tm in re.finditer(
+            r'type\s+(\w+)\s*\{([^}]*)\}', raw, re.DOTALL
+        ):
+            type_name = tm.group(1)
+            fields_raw = tm.group(2)
+            fields: Dict[str, str] = {}
+            for fm in re.finditer(r'(\w+)\s*:\s*([\w!\[\]]+)', fields_raw):
+                fields[fm.group(1)] = fm.group(2)
+            gb.types[type_name] = fields
+
+        # Parse Query resolvers: query queryName -> resolver_func
+        for qm in re.finditer(r'query\s+(\w+)\s*->\s*(\w+)', raw):
+            gb.queries[qm.group(1)] = qm.group(2)
+
+        # Parse Mutation resolvers: mutation mutationName -> resolver_func
+        for mm in re.finditer(r'mutation\s+(\w+)\s*->\s*(\w+)', raw):
+            gb.mutations[mm.group(1)] = mm.group(2)
+
+        return gb
+
+    # ── rbac ──────────────────────────────────────────────────────────────────
+    def _parse_rbac(self) -> "RBACBlock":
+        self._expect(TT.RBAC)
+        self._expect(TT.LBRACE)
+        raw = self._expect(TT.RAW_PYTHON).value if self._match(TT.RAW_PYTHON) else ""
+        self._expect(TT.RBRACE)
+        from .parser import RBACBlock
+        rb = RBACBlock(raw=raw)
+
+        # roles = ["admin", "user", "guest"]
+        roles_m = re.search(r'roles\s*=\s*\[(.*?)\]', raw, re.DOTALL)
+        if roles_m:
+            rb.roles = [
+                r.strip().strip("'\"")
+                for r in roles_m.group(1).split(",")
+                if r.strip()
+            ]
+
+        # default_role = "guest"
+        dr_m = re.search(r'default_role\s*=\s*["\'](\w+)["\']', raw)
+        if dr_m:
+            rb.default_role = dr_m.group(1)
+
+        # permissions: role -> ["endpoint1", "endpoint2"]
+        for pm in re.finditer(r'(\w+)\s*:\s*\[(.*?)\]', raw, re.DOTALL):
+            role = pm.group(1).strip()
+            if role in ("roles", "permissions"):
+                continue
+            endpoints = [
+                e.strip().strip("'\"")
+                for e in pm.group(2).split(",")
+                if e.strip()
+            ]
+            if endpoints:
+                rb.permissions[role] = endpoints
+
+        return rb
+
+    # ── webrtc ────────────────────────────────────────────────────────────────
+    def _parse_webrtc(self) -> "WebRTCBlock":
+        self._expect(TT.WEBRTC)
+        self._expect(TT.LBRACE)
+        raw = self._expect(TT.RAW_PYTHON).value if self._match(TT.RAW_PYTHON) else ""
+        self._expect(TT.RBRACE)
+        from .parser import WebRTCBlock
+        wb = WebRTCBlock(raw=raw)
+
+        # signaling = "websockets"
+        sig_m = re.search(r'signaling\s*=\s*["\'](\w+)["\']', raw)
+        if sig_m:
+            wb.signaling = sig_m.group(1)
+
+        # codecs = ["vp8", "opus"]
+        codecs_m = re.search(r'codecs\s*=\s*\[(.*?)\]', raw, re.DOTALL)
+        if codecs_m:
+            wb.codecs = [
+                c.strip().strip("'\"")
+                for c in codecs_m.group(1).split(",")
+                if c.strip()
+            ]
+
+        return wb
 

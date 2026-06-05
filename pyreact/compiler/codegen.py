@@ -857,6 +857,12 @@ class CodeGenerator:
         self._gen_manifest()
         self._gen_desktop()
         self._gen_mobile()
+        # ── Fase 24-26 new generators ─────────────────────────────────────────
+        self._gen_crdt()          # Fase 24: Real-time Collaborative State
+        self._gen_graphql()       # Fase 25: GraphQL API Engine
+        self._gen_rbac()          # Fase 26: RBAC Role-Based Access Control
+        self._gen_webrtc()        # Fase 27: WebRTC P2P & Audio/Video Streaming
+
 
     def _gen_backend(self):
         import os
@@ -870,24 +876,43 @@ class CodeGenerator:
         flask_app_code += 'from flask_cors import CORS\n'
 
         if self.ast.database:
-            flask_app_code += 'from flask_sqlalchemy import SQLAlchemy\n\n'
-            flask_app_code += 'app = Flask(__name__)\n'
-            flask_app_code += 'CORS(app)\n\n'
-            
             db_block = self.ast.database
-            if db_block.provider == "sqlite":
-                flask_app_code += 'os.makedirs(app.instance_path, exist_ok=True)\n'
-                db_url = db_block.url
-                if not os.path.isabs(db_url) and not db_url.startswith("file:"):
-                    flask_app_code += f'db_path = os.path.join(app.instance_path, "{db_url}")\n'
-                    flask_app_code += "app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///' + db_path\n"
+            if db_block.provider in ("sqlite", "postgresql", "mysql"):
+                flask_app_code += 'from flask_sqlalchemy import SQLAlchemy\n\n'
+                flask_app_code += 'app = Flask(__name__)\n'
+                flask_app_code += 'CORS(app)\n\n'
+                if db_block.provider == "sqlite":
+                    flask_app_code += 'os.makedirs(app.instance_path, exist_ok=True)\n'
+                    db_url = db_block.url
+                    if not os.path.isabs(db_url) and not db_url.startswith("file:"):
+                        flask_app_code += f'db_path = os.path.join(app.instance_path, "{db_url}")\n'
+                        flask_app_code += "app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///' + db_path\n"
+                    else:
+                        flask_app_code += f"app.config['SQLALCHEMY_DATABASE_URI'] = '{db_url}'\n"
                 else:
-                    flask_app_code += f"app.config['SQLALCHEMY_DATABASE_URI'] = '{db_url}'\n"
+                    flask_app_code += f"app.config['SQLALCHEMY_DATABASE_URI'] = '{db_block.url}'\n"
+                    flask_app_code += "app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {\n"
+                    flask_app_code += "    'pool_size': 10,\n"
+                    flask_app_code += "    'max_overflow': 20,\n"
+                    flask_app_code += "    'pool_recycle': 1800\n"
+                    flask_app_code += "}\n"
+                flask_app_code += "app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False\n"
+                flask_app_code += "db = SQLAlchemy(app)\n\n"
+            elif db_block.provider == "mongodb":
+                flask_app_code += 'from pymongo import MongoClient\n\n'
+                flask_app_code += 'app = Flask(__name__)\n'
+                flask_app_code += 'CORS(app)\n\n'
+                flask_app_code += f"mongo_client = MongoClient('{db_block.url}', maxPoolSize=50)\n"
+                flask_app_code += "db_mongo = mongo_client.get_database()\n\n"
+            elif db_block.provider == "redis":
+                flask_app_code += 'import redis\n\n'
+                flask_app_code += 'app = Flask(__name__)\n'
+                flask_app_code += 'CORS(app)\n\n'
+                flask_app_code += f"redis_pool = redis.ConnectionPool.from_url('{db_block.url}', max_connections=20)\n"
+                flask_app_code += "redis_client = redis.Redis(connection_pool=redis_pool)\n\n"
             else:
-                flask_app_code += f"app.config['SQLALCHEMY_DATABASE_URI'] = '{db_block.url}'\n"
-                
-            flask_app_code += "app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False\n"
-            flask_app_code += "db = SQLAlchemy(app)\n\n"
+                flask_app_code += 'app = Flask(__name__)\n'
+                flask_app_code += 'CORS(app)\n\n'
         else:
             flask_app_code += '\napp = Flask(__name__)\n'
             flask_app_code += 'CORS(app)\n\n'
@@ -895,7 +920,7 @@ class CodeGenerator:
         flask_app_code += 'from routes import register_routes\n'
         flask_app_code += 'register_routes(app)\n\n'
         
-        if self.ast.database:
+        if self.ast.database and self.ast.database.provider in ("sqlite", "postgresql", "mysql"):
             flask_app_code += '# Create tables and apply auto-migrations\n'
             flask_app_code += 'def auto_migrate(app, db):\n'
             flask_app_code += '    with app.app_context():\n'
@@ -926,12 +951,79 @@ class CodeGenerator:
         
         wt(be / "app.py", flask_app_code)
 
-        # 2. Custom requirements.txt
+        # 2. Transactions & Lock coordinator
+        transactions_py = """\
+# Auto-generated Distributed Transaction & Lock Coordinator (PyReact Fase 28)
+import uuid
+import time
+
+class DistributedTransactionManager:
+    def __init__(self):
+        self.participants = []
+
+    def register_participant(self, participant):
+        self.participants.append(participant)
+
+    def execute(self, action_func):
+        try:
+            for p in self.participants:
+                if hasattr(p, "prepare") and not p.prepare():
+                    raise Exception("Prepare phase failed")
+            result = action_func()
+            for p in self.participants:
+                if hasattr(p, "commit"):
+                    p.commit()
+            return result
+        except Exception as e:
+            for p in self.participants:
+                if hasattr(p, "rollback"):
+                    p.rollback()
+            raise e
+
+class RedisLockManager:
+    def __init__(self, redis_client):
+        self.redis = redis_client
+
+    def acquire_lock(self, lock_name: str, expire_seconds: int = 10) -> str:
+        identifier = str(uuid.uuid4())
+        end = time.time() + expire_seconds
+        while time.time() < end:
+            if self.redis.set(f"lock:{lock_name}", identifier, ex=expire_seconds, nx=True):
+                return identifier
+            time.sleep(0.1)
+        return ""
+
+    def release_lock(self, lock_name: str, identifier: str) -> bool:
+        lock_key = f"lock:{lock_name}"
+        lua = '''
+        if redis.call("get", KEYS[1]) == ARGV[1] then
+            return redis.call("del", KEYS[1])
+        else
+            return 0
+        end
+        '''
+        try:
+            result = self.redis.eval(lua, 1, lock_key, identifier)
+            return bool(result)
+        except Exception:
+            return False
+"""
+        wt(be / "transactions.py", transactions_py)
+
+        # 3. Custom requirements.txt
         reqs = REQUIREMENTS + "pyjwt>=2.8.0\n"
         if self.ast.database:
-            reqs += "flask-sqlalchemy>=3.1.0\n"
-            if self.ast.database.provider == "postgresql":
-                reqs += "psycopg2-binary>=2.9.0\n"
+            db_block = self.ast.database
+            if db_block.provider in ("sqlite", "postgresql", "mysql"):
+                reqs += "flask-sqlalchemy>=3.1.0\n"
+                if db_block.provider == "postgresql":
+                    reqs += "psycopg2-binary>=2.9.0\n"
+                elif db_block.provider == "mysql":
+                    reqs += "pymysql>=1.1.0\n"
+            elif db_block.provider == "mongodb":
+                reqs += "pymongo>=4.6.0\n"
+            elif db_block.provider == "redis":
+                reqs += "redis>=5.0.0\n"
         if self.ast.dependencies and self.ast.dependencies.pip:
             reqs += "\n# Custom dependencies\n"
             for p in self.ast.dependencies.pip:
@@ -3803,6 +3895,969 @@ fn main() {
 
 
 
+
+
+    # ─── Fase 24 – Real-time Collaborative State (CRDT-lite) ─────────────────
+    def _gen_crdt(self):
+        """Generate CRDT-lite collaborative state engine (Fase 24)."""
+        fe_src = self.out / "frontend" / "src"
+        if not fe_src.exists():
+            return
+
+        # ── crdt.js: client-side CRDT-lite + useRealtimeChannel hook ──────────
+        crdt_js = """\
+/**
+ * PyReact CRDT-lite Collaborative State Engine (Fase 24)
+ * Implements a Last-Write-Wins Register with vector-clock merge strategy.
+ * Zero external dependencies — pure JavaScript.
+ */
+import { useState, useEffect, useRef, useCallback } from "react";
+
+// ── Vector Clock ────────────────────────────────────────────────────────────
+function createClock(nodeId) {
+  return { nodeId, ticks: {} };
+}
+function tickClock(clock) {
+  const next = { ...clock, ticks: { ...clock.ticks } };
+  next.ticks[clock.nodeId] = (next.ticks[clock.nodeId] || 0) + 1;
+  return next;
+}
+function mergeClock(a, b) {
+  const merged = { nodeId: a.nodeId, ticks: { ...a.ticks } };
+  for (const [k, v] of Object.entries(b.ticks)) {
+    merged.ticks[k] = Math.max(merged.ticks[k] || 0, v);
+  }
+  return merged;
+}
+function clockAfter(a, b) {
+  // a > b if for every key, a[k] >= b[k] and at least one a[k] > b[k]
+  let greater = false;
+  for (const [k, v] of Object.entries(a.ticks)) {
+    const bv = b.ticks[k] || 0;
+    if (v < bv) return false;
+    if (v > bv) greater = true;
+  }
+  return greater;
+}
+
+// ── LWW-Register Document ───────────────────────────────────────────────────
+class CRDTDocument {
+  constructor(nodeId) {
+    this._nodeId = nodeId;
+    this._clock = createClock(nodeId);
+    this._entries = {};   // key -> { value, clock }
+  }
+
+  set(key, value) {
+    this._clock = tickClock(this._clock);
+    this._entries[key] = { value, clock: { ...this._clock } };
+    return this._serialize(key);
+  }
+
+  merge(op) {
+    const { key, value, clock } = op;
+    const existing = this._entries[key];
+    if (!existing || clockAfter(clock, existing.clock)) {
+      this._entries[key] = { value, clock };
+      this._clock = mergeClock(this._clock, clock);
+      return true; // applied
+    }
+    return false; // ignored (stale)
+  }
+
+  get(key) {
+    return this._entries[key]?.value;
+  }
+
+  snapshot() {
+    const snap = {};
+    for (const [k, v] of Object.entries(this._entries)) snap[k] = v.value;
+    return snap;
+  }
+
+  _serialize(key) {
+    const entry = this._entries[key];
+    return { key, value: entry.value, clock: entry.clock, nodeId: this._nodeId };
+  }
+}
+
+// ── Singleton CRDT store ────────────────────────────────────────────────────
+const _nodeId = `node_${Math.random().toString(36).slice(2, 9)}`;
+const _docs = {};
+const _listeners = {};
+
+function getDoc(channel) {
+  if (!_docs[channel]) _docs[channel] = new CRDTDocument(_nodeId);
+  return _docs[channel];
+}
+function subscribe(channel, fn) {
+  if (!_listeners[channel]) _listeners[channel] = new Set();
+  _listeners[channel].add(fn);
+  return () => _listeners[channel].delete(fn);
+}
+function notify(channel) {
+  const fns = _listeners[channel];
+  if (fns) fns.forEach(fn => fn(getDoc(channel).snapshot()));
+}
+
+// ── WebSocket transport ─────────────────────────────────────────────────────
+let _ws = null;
+let _wsReady = false;
+const _sendQueue = [];
+
+function ensureWS() {
+  if (_ws) return;
+  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+  const host = window.location.host || "localhost:5000";
+  const token = localStorage.getItem("pyreact_token");
+  const url = `${protocol}//${host}/api/ws${token ? "?token=" + encodeURIComponent(token) : ""}`;
+  _ws = new WebSocket(url);
+  _ws.onopen = () => {
+    _wsReady = true;
+    _sendQueue.splice(0).forEach(m => _ws.send(m));
+  };
+  _ws.onmessage = (ev) => {
+    try {
+      const msg = JSON.parse(ev.data);
+      if (msg.__crdt && msg.channel) {
+        const doc = getDoc(msg.channel);
+        const applied = doc.merge(msg.op);
+        if (applied) notify(msg.channel);
+      }
+    } catch (_) {}
+  };
+  _ws.onclose = () => {
+    _ws = null; _wsReady = false;
+    setTimeout(ensureWS, 3000);
+  };
+}
+
+function wsSend(payload) {
+  const str = JSON.stringify(payload);
+  if (_wsReady && _ws?.readyState === WebSocket.OPEN) {
+    _ws.send(str);
+  } else {
+    _sendQueue.push(str);
+    ensureWS();
+  }
+}
+
+// ── useRealtimeChannel hook ─────────────────────────────────────────────────
+/**
+ * React hook for real-time collaborative state on a named channel.
+ *
+ * @param {string} channel  - Unique channel name (e.g. "whiteboard", "editor")
+ * @param {object} initial  - Initial state object
+ * @returns [state, setState]  where setState(key, value) broadcasts the change
+ *
+ * Usage:
+ *   const [state, setState] = useRealtimeChannel("whiteboard", { cursor: null });
+ *   setState("cursor", { x: 100, y: 200 });
+ */
+export function useRealtimeChannel(channel, initial = {}) {
+  const doc = getDoc(channel);
+
+  // seed initial values (no broadcast)
+  for (const [k, v] of Object.entries(initial)) {
+    if (doc.get(k) === undefined) doc._entries[k] = { value: v, clock: { nodeId: _nodeId, ticks: {} } };
+  }
+
+  const [state, setLocalState] = useState(() => doc.snapshot());
+
+  useEffect(() => {
+    ensureWS();
+    const unsub = subscribe(channel, setLocalState);
+    return unsub;
+  }, [channel]);
+
+  const setState = useCallback((key, value) => {
+    const op = doc.set(key, value);
+    notify(channel);
+    wsSend({ __crdt: true, channel, op });
+  }, [channel]);
+
+  return [state, setState];
+}
+
+export default { useRealtimeChannel };
+"""
+        wt(fe_src / "crdt.js", crdt_js)
+
+        # ── Python broadcast helper (backend/crdt_broadcast.py) ──────────────
+        be = self.out / "backend"
+        if be.exists():
+            crdt_py = """\
+\"\"\"
+PyReact CRDT Broadcast Helper (Fase 24)
+Broadcasts a CRDT operation to all connected WebSocket clients.
+Import and call from your server block functions.
+\"\"\"
+import json
+
+# This module patches into the existing WS client registry at runtime.
+# The actual registry (_ws_clients) is populated by routes.py FastAPI WS handler.
+
+def broadcast_crdt(channel: str, key: str, value, clock: dict, node_id: str):
+    \"\"\"
+    Broadcast a CRDT LWW op to all connected clients on `channel`.
+    Must be called from within an async FastAPI context.
+    \"\"\"
+    op = {"key": key, "value": value, "clock": clock, "nodeId": node_id}
+    payload = json.dumps({"__crdt": True, "channel": channel, "op": op})
+    try:
+        from routes import _ws_clients  # noqa: F401  injected by router
+        import asyncio
+        for ws in list(_ws_clients):
+            asyncio.create_task(ws.send_text(payload))
+    except Exception:
+        pass  # graceful no-op when no WS server running
+"""
+            wt(be / "crdt_broadcast.py", crdt_py)
+
+    # ─── Fase 25 – GraphQL API Engine ──────────────────────────────────────
+    def _gen_graphql(self):
+        """Generate GraphQL schema + endpoint + React client (Fase 25)."""
+        gql_block = getattr(self.ast, "graphql", None)
+        if not gql_block:
+            return
+
+        fe_src = self.out / "frontend" / "src"
+        be = self.out / "backend"
+
+        # ── graphql_schema.py (backend) ────────────────────────────────────────
+        if be.exists():
+            # Build SDL
+            sdl_lines = []
+            for type_name, fields in gql_block.types.items():
+                sdl_lines.append(f"type {type_name} {{")
+                for fname, ftype in fields.items():
+                    sdl_lines.append(f"  {fname}: {ftype}")
+                sdl_lines.append("}")
+
+            if gql_block.queries:
+                sdl_lines.append("type Query {")
+                for q_name in gql_block.queries:
+                    sdl_lines.append(f"  {q_name}: String")
+                sdl_lines.append("}")
+
+            if gql_block.mutations:
+                sdl_lines.append("type Mutation {")
+                for m_name in gql_block.mutations:
+                    sdl_lines.append(f"  {m_name}(input: String): String")
+                sdl_lines.append("}")
+
+            sdl = "\n".join(sdl_lines) if sdl_lines else "type Query { ping: String }"
+
+            # Build resolver map
+            resolver_lines = []
+            for q_name, resolver in gql_block.queries.items():
+                resolver_lines.append(f'    "{q_name}": {resolver},')
+            for m_name, resolver in gql_block.mutations.items():
+                resolver_lines.append(f'    "{m_name}": {resolver},')
+
+            resolvers_str = "\n".join(resolver_lines)
+
+            schema_py = f'''\
+"""Auto-generated GraphQL schema & endpoint (PyReact Fase 25)."""
+import json
+from flask import Blueprint, request, jsonify
+
+# ── SDL Schema ─────────────────────────────────────────────────────────────
+GRAPHQL_SDL = """
+{sdl}
+"""
+
+# ── Resolver registry ──────────────────────────────────────────────────────
+# Keys must match Query/Mutation field names.
+# Values are Python callables imported from generated_api.py.
+try:
+    from generated_api import *  # noqa: F401, F403
+except ImportError:
+    pass
+
+_RESOLVERS = {{
+{resolvers_str}
+}}
+
+# ── Minimal GraphQL executor (field-level, no variables) ──────────────────
+def _execute(query_str: str, variables: dict = None) -> dict:
+    variables = variables or {{}}
+    import re
+    # detect operation type
+    op_match = re.match(r'\\s*(query|mutation)\\s*\\{{([^}}]+)\\}}', query_str, re.S)
+    if not op_match:
+        # try shorthand {{ field }}
+        op_match = re.match(r'\\s*\\{{([^}}]+)\\}}', query_str, re.S)
+        if op_match:
+            fields_str = op_match.group(1)
+            op_type = "query"
+        else:
+            return {{"errors": [{{"message": "Parse error: unrecognised query format"}}]}}
+    else:
+        op_type = op_match.group(1)
+        fields_str = op_match.group(2)
+
+    data = {{}}
+    for field_match in re.finditer(r'(\\w+)', fields_str):
+        field = field_match.group(1)
+        resolver = _RESOLVERS.get(field)
+        if resolver:
+            try:
+                result = resolver(**(variables.get(field) or {{}}))
+                data[field] = result if not isinstance(result, dict) else result.get("data", result)
+            except Exception as exc:
+                data[field] = None
+                data.setdefault("_errors", []).append(str(exc))
+        else:
+            data[field] = None
+    return {{"data": data}}
+
+
+# ── Flask Blueprint ─────────────────────────────────────────────────────────
+graphql_bp = Blueprint("graphql", __name__)
+
+@graphql_bp.route("/graphql", methods=["GET", "POST"])
+def graphql_endpoint():
+    if request.method == "GET":
+        # Introspection: return SDL
+        return jsonify({{"sdl": GRAPHQL_SDL.strip(), "status": "ok"}})
+    body = request.get_json(force=True, silent=True) or {{}}
+    query = body.get("query", "")
+    variables = body.get("variables", {{}})
+    result = _execute(query, variables)
+    return jsonify(result)
+'''
+            wt(be / "graphql_schema.py", schema_py)
+
+            # Patch routes.py to register the blueprint (idempotent append)
+            routes_path = be / "routes.py"
+            if routes_path.exists():
+                routes_txt = routes_path.read_text(encoding="utf-8")
+                if "graphql_schema" not in routes_txt:
+                    patch = "\n# Fase 25 – GraphQL\ntry:\n    from graphql_schema import graphql_bp\n    app.register_blueprint(graphql_bp)\nexcept Exception:\n    pass\n"
+                    wt(routes_path, routes_txt + patch)
+
+        # ── graphql_client.js (frontend) ───────────────────────────────────────
+        if fe_src and fe_src.exists():
+            client_js = """\
+/**
+ * PyReact GraphQL Client (Fase 25)
+ * Provides useQuery and useMutation hooks with caching & loading state.
+ * Zero external dependencies.
+ */
+import { useState, useEffect, useCallback, useRef } from "react";
+
+const GQL_ENDPOINT = "/graphql";
+
+// ── Simple in-memory cache ──────────────────────────────────────────────────
+const _cache = new Map();
+
+async function gqlFetch(query, variables = {}) {
+  const token = localStorage.getItem("pyreact_token");
+  const headers = { "Content-Type": "application/json" };
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  const res = await fetch(GQL_ENDPOINT, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ query, variables }),
+  });
+  if (!res.ok) throw new Error(`GraphQL HTTP error: ${res.status}`);
+  const json = await res.json();
+  if (json.errors?.length) throw new Error(json.errors[0].message);
+  return json.data;
+}
+
+/**
+ * useQuery — fetches data on mount and when `query` changes.
+ *
+ * @param {string} query      - GraphQL query string
+ * @param {object} variables  - Optional variables
+ * @param {object} options    - { skip, cacheKey }
+ * @returns { data, loading, error, refetch }
+ *
+ * Usage:
+ *   const { data, loading } = useQuery(`{ users }`);
+ */
+export function useQuery(query, variables = {}, { skip = false, cacheKey } = {}) {
+  const key = cacheKey || query + JSON.stringify(variables);
+  const [data, setData] = useState(() => _cache.get(key) ?? null);
+  const [loading, setLoading] = useState(!skip && !_cache.has(key));
+  const [error, setError] = useState(null);
+  const mountedRef = useRef(true);
+
+  const fetch_ = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await gqlFetch(query, variables);
+      _cache.set(key, result);
+      if (mountedRef.current) setData(result);
+    } catch (e) {
+      if (mountedRef.current) setError(e.message);
+    } finally {
+      if (mountedRef.current) setLoading(false);
+    }
+  }, [query, JSON.stringify(variables)]);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    if (!skip) fetch_();
+    return () => { mountedRef.current = false; };
+  }, [fetch_, skip]);
+
+  return { data, loading, error, refetch: fetch_ };
+}
+
+/**
+ * useMutation — returns an execute function plus loading/error state.
+ *
+ * @param {string} mutation - GraphQL mutation string
+ * @returns [execute, { data, loading, error }]
+ *
+ * Usage:
+ *   const [createUser, { loading }] = useMutation(`mutation { createUser }`);
+ *   await createUser({ name: "Alice" });
+ */
+export function useMutation(mutation) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+
+  const execute = useCallback(async (variables = {}) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await gqlFetch(mutation, variables);
+      setData(result);
+      return result;
+    } catch (e) {
+      setError(e.message);
+      throw e;
+    } finally {
+      setLoading(false);
+    }
+  }, [mutation]);
+
+  return [execute, { data, loading, error }];
+}
+
+export default { useQuery, useMutation };
+"""
+            wt(fe_src / "graphql_client.js", client_js)
+
+    # ─── Fase 26 – RBAC (Role-Based Access Control) ───────────────────────
+    def _gen_rbac(self):
+        """Generate RBAC backend decorator + frontend context (Fase 26)."""
+        rbac_block = getattr(self.ast, "rbac", None)
+
+        fe_src = self.out / "frontend" / "src"
+        be = self.out / "backend"
+
+        # ── rbac.py (backend) ──────────────────────────────────────────────────
+        if be and be.exists():
+            roles = rbac_block.roles if rbac_block else ["admin", "user", "guest"]
+            default_role = rbac_block.default_role if rbac_block else "guest"
+            permissions = rbac_block.permissions if rbac_block else {}
+
+            # Build permissions dict literal
+            perm_items = []
+            for role, endpoints in permissions.items():
+                eps = ", ".join(f'"{e}"' for e in endpoints)
+                perm_items.append(f'    "{role}": [{eps}]')
+            perm_dict = "{\n" + ",\n".join(perm_items) + "\n}" if perm_items else "{}"
+
+            roles_list = ", ".join(f'"{r}"' for r in roles)
+
+            rbac_py = f'''\
+"""Auto-generated RBAC module (PyReact Fase 26)."""
+import functools
+import jwt
+from flask import request, jsonify
+
+# ── Configuration ───────────────────────────────────────────────────────────
+ROLES = [{roles_list}]
+DEFAULT_ROLE = "{default_role}"
+JWT_SECRET = "pyreact_jwt_secret_change_me"
+
+# ── Permission table  (role -> list of allowed endpoint names) ──────────────
+PERMISSIONS = {perm_dict}
+
+# ── Helpers ─────────────────────────────────────────────────────────────────
+
+def _get_request_role() -> str:
+    """Extract role from JWT Bearer token, fallback to DEFAULT_ROLE."""
+    auth = request.headers.get("Authorization", "")
+    if auth.startswith("Bearer "):
+        try:
+            payload = jwt.decode(auth[7:], JWT_SECRET, algorithms=["HS256"])
+            return payload.get("role", DEFAULT_ROLE)
+        except Exception:
+            pass
+    return DEFAULT_ROLE
+
+
+def has_permission(role: str, endpoint: str) -> bool:
+    """Return True if *role* is allowed to call *endpoint*."""
+    # admin bypass: if 'admin' is in roles and this user is admin
+    if role == "admin" and "admin" in ROLES:
+        return True
+    allowed = PERMISSIONS.get(role, [])
+    return endpoint in allowed or "*" in allowed
+
+
+def role_required(*allowed_roles):
+    """
+    Decorator — restricts a Flask route to users with one of *allowed_roles*.
+
+    Usage::
+
+        @app.route("/api/admin_action", methods=["POST"])
+        @role_required("admin")
+        def admin_action():
+            ...
+    """
+    def decorator(fn):
+        @functools.wraps(fn)
+        def wrapper(*args, **kwargs):
+            role = _get_request_role()
+            if role not in allowed_roles:
+                return jsonify({{"error": "Forbidden", "required": list(allowed_roles), "actual": role}}), 403
+            return fn(*args, **kwargs)
+        return wrapper
+    return decorator
+
+
+def permission_required(endpoint_name: str):
+    """
+    Decorator — checks PERMISSIONS table for the current user\'s role.
+
+    Usage::
+
+        @app.route("/api/sensitive", methods=["POST"])
+        @permission_required("sensitive")
+        def sensitive():
+            ...
+    """
+    def decorator(fn):
+        @functools.wraps(fn)
+        def wrapper(*args, **kwargs):
+            role = _get_request_role()
+            if not has_permission(role, endpoint_name):
+                return jsonify({{"error": "Forbidden", "endpoint": endpoint_name, "role": role}}), 403
+            return fn(*args, **kwargs)
+        return wrapper
+    return decorator
+'''
+            wt(be / "rbac.py", rbac_py)
+
+        # ── rbac.js (frontend) ─────────────────────────────────────────────────
+        if fe_src and fe_src.exists():
+            roles_js = []
+            if rbac_block:
+                for role in rbac_block.roles:
+                    roles_js.append(f'  "{role}"')
+            roles_js_arr = "[\n" + ",\n".join(roles_js) + "\n]" if roles_js else '["admin","user","guest"]'
+
+            default_role_js = f'"{rbac_block.default_role}"' if rbac_block else '"guest"'
+
+            perm_js_items = []
+            if rbac_block:
+                for role, endpoints in rbac_block.permissions.items():
+                    eps_js = ", ".join(f'"{e}"' for e in endpoints)
+                    perm_js_items.append(f'  "{role}": [{eps_js}]')
+            perm_js = "{\n" + ",\n".join(perm_js_items) + "\n}" if perm_js_items else "{}"
+
+            rbac_js = f"""\
+/**
+ * PyReact RBAC Client (Fase 26)
+ * Provides React context, useRBAC hook, and <RBACGuard> component
+ * for client-side role enforcement synced with the JWT token.
+ */
+import React, {{ createContext, useContext, useState, useEffect }} from "react";
+
+// ── Config (mirrors backend rbac.py) ────────────────────────────────────────
+export const ROLES = {roles_js_arr};
+export const DEFAULT_ROLE = {default_role_js};
+export const PERMISSIONS = {perm_js};
+
+// ── Context ──────────────────────────────────────────────────────────────────
+const RBACContext = createContext({{ role: DEFAULT_ROLE, hasPermission: () => false }});
+
+/**
+ * RBACProvider — wrap your app root with this to enable RBAC.
+ *
+ * It reads the JWT from localStorage and extracts the role claim.
+ * Re-evaluates whenever localStorage changes (login / logout).
+ */
+export function RBACProvider({{ children }}) {{
+  const [role, setRole] = useState(() => _decodeRole());
+
+  useEffect(() => {{
+    const handler = () => setRole(_decodeRole());
+    window.addEventListener("storage", handler);
+    window.addEventListener("pyreact-auth-change", handler);
+    return () => {{
+      window.removeEventListener("storage", handler);
+      window.removeEventListener("pyreact-auth-change", handler);
+    }};
+  }}, []);
+
+  const hasPermission = (endpoint) => {{
+    if (role === "admin") return true;
+    const allowed = PERMISSIONS[role] || [];
+    return allowed.includes(endpoint) || allowed.includes("*");
+  }};
+
+  return (
+    <RBACContext.Provider value={{{{ role, hasPermission }}}}>
+      {{children}}
+    </RBACContext.Provider>
+  );
+}}
+
+function _decodeRole() {{
+  try {{
+    const token = localStorage.getItem("pyreact_token");
+    if (!token) return DEFAULT_ROLE;
+    const payload = JSON.parse(atob(token.split(".")[1]));
+    return payload.role || DEFAULT_ROLE;
+  }} catch (_) {{
+    return DEFAULT_ROLE;
+  }}
+}}
+
+/**
+ * useRBAC — returns current user role and permission helpers.
+ *
+ * @returns {{ role, hasPermission, isAdmin, isRole }}
+ *
+ * Usage:
+ *   const {{ role, hasPermission }} = useRBAC();
+ *   if (!hasPermission("delete_user")) return <Forbidden />;
+ */
+export function useRBAC() {{
+  return useContext(RBACContext);
+}}
+
+/**
+ * RBACGuard — conditionally renders children based on role/permission.
+ *
+ * Props:
+ *   roles      - array of allowed role strings, e.g. ["admin", "user"]
+ *   permission - single endpoint permission name, e.g. "delete_user"
+ *   fallback   - node to render when access denied (default: null)
+ *
+ * Usage:
+ *   <RBACGuard roles={{["admin"]}}>
+ *     <AdminPanel />
+ *   </RBACGuard>
+ *
+ *   <RBACGuard permission="delete_user" fallback={{<p>No access</p>}}>
+ *     <DeleteButton />
+ *   </RBACGuard>
+ */
+export function RBACGuard({{ children, roles = [], permission = null, fallback = null }}) {{
+  const {{ role, hasPermission }} = useRBAC();
+  const roleOk = roles.length === 0 || roles.includes(role);
+  const permOk = !permission || hasPermission(permission);
+  if (roleOk && permOk) return children;
+  return fallback;
+}}
+
+export default {{ RBACProvider, useRBAC, RBACGuard, ROLES, PERMISSIONS }};
+"""
+            wt(fe_src / "rbac.js", rbac_js)
+
+
+    # ─── Fase 27 – WebRTC P2P & Audio/Video Streaming ─────────────────────
+    def _gen_webrtc(self):
+        """Generate WebRTC signaling and client-side P2P modules (Fase 27)."""
+        webrtc_block = getattr(self.ast, "webrtc", None)
+        fe_src = self.out / "frontend" / "src"
+        be = self.out / "backend"
+
+        # ── webrtc_signaling.py (backend) ──────────────────────────────────────
+        if be and be.exists():
+            signaling = webrtc_block.signaling if webrtc_block else "websockets"
+            codecs = webrtc_block.codecs if webrtc_block else ["vp8", "opus"]
+            codecs_list = ", ".join(f'"{c}"' for c in codecs)
+
+            webrtc_py = f'''\
+"""Auto-generated WebRTC signaling server (PyReact Fase 27)."""
+from flask import Blueprint, request, jsonify
+
+webrtc_bp = Blueprint("webrtc", __name__)
+
+# room_id -> list of signaling messages
+_signals = {{}}
+SUPPORTED_CODECS = [{codecs_list}]
+SIGNALING_PROVIDER = "{signaling}"
+
+@webrtc_bp.route("/api/webrtc/join", methods=["POST"])
+def join_room():
+    body = request.get_json(force=True, silent=True) or {{}}
+    room_id = body.get("roomId", "default")
+    peer_id = body.get("peerId")
+    _signals.setdefault(room_id, []).append({{
+        "type": "join",
+        "peerId": peer_id
+    }})
+    return jsonify({{"status": "joined", "room": room_id}})
+
+@webrtc_bp.route("/api/webrtc/signal", methods=["POST"])
+def send_signal():
+    body = request.get_json(force=True, silent=True) or {{}}
+    room_id = body.get("roomId", "default")
+    peer_id = body.get("peerId")
+    message = body.get("message")
+    _signals.setdefault(room_id, []).append({{
+        "type": "message",
+        "peerId": peer_id,
+        "message": message
+    }})
+    return jsonify({{"status": "ok"}})
+
+@webrtc_bp.route("/api/webrtc/poll", methods=["GET"])
+def poll_signals():
+    room_id = request.args.get("roomId", "default")
+    peer_id = request.args.get("peerId")
+    msgs = _signals.get(room_id, [])
+    # Filter messages not sent by this peer
+    unread = [m for m in msgs if m.get("peerId") != peer_id]
+    # Clear the queue for this peer
+    _signals[room_id] = [m for m in msgs if m.get("peerId") == peer_id]
+    return jsonify({{"messages": unread}})
+'''
+            wt(be / "webrtc_signaling.py", webrtc_py)
+
+            # Patch routes.py to register the blueprint (idempotent append)
+            routes_path = be / "routes.py"
+            if routes_path.exists():
+                routes_txt = routes_path.read_text(encoding="utf-8")
+                if "webrtc_signaling" not in routes_txt:
+                    patch = "\n# Fase 27 – WebRTC Signaling\ntry:\n    from webrtc_signaling import webrtc_bp\n    app.register_blueprint(webrtc_bp)\nexcept Exception:\n    pass\n"
+                    wt(routes_path, routes_txt + patch)
+
+        # ── webrtc_client.js (frontend) ────────────────────────────────────────
+        if fe_src and fe_src.exists():
+            client_js = """\
+/**
+ * PyReact WebRTC Client (Fase 27)
+ * Handles RTCPeerConnection initialization, local/remote stream binding,
+ * and polling-based signaling broker.
+ */
+import { useState, useEffect, useRef, useCallback } from "react";
+
+const SIGNAL_URL = "/api/webrtc";
+
+export function useWebRTC(roomId, peerId = null) {
+  const [localStream, setLocalStream] = useState(null);
+  const [remoteStream, setRemoteStream] = useState(null);
+  const [isConnected, setIsConnected] = useState(false);
+  const [myId] = useState(() => peerId || `peer_${Math.random().toString(36).substring(2, 9)}`);
+  
+  const pcRef = useRef(null);
+  const localVideoRef = useRef(null);
+  const remoteVideoRef = useRef(null);
+  const pollIntervalRef = useRef(null);
+
+  const initMedia = async (options = { video: true, audio: true }) => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia(options);
+      setLocalStream(stream);
+      if (localVideoRef.current) localVideoRef.current.srcObject = stream;
+      return stream;
+    } catch (e) {
+      console.error("Failed to get user media", e);
+    }
+  };
+
+  const startCall = async () => {
+    const stream = localStream || await initMedia();
+    const pc = new RTCPeerConnection({
+      iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
+    });
+
+    stream.getTracks().forEach(track => pc.addTrack(track, stream));
+
+    pc.ontrack = (event) => {
+      setRemoteStream(event.streams[0]);
+      if (remoteVideoRef.current) remoteVideoRef.current.srcObject = event.streams[0];
+      setIsConnected(true);
+    };
+
+    pc.onicecandidate = (event) => {
+      if (event.candidate) {
+        sendSignal({ candidate: event.candidate });
+      }
+    };
+
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    sendSignal({ sdp: pc.localDescription });
+
+    pcRef.current = pc;
+  };
+
+  const sendSignal = async (message) => {
+    try {
+      await fetch(`${SIGNAL_URL}/signal`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ roomId, peerId: myId, message })
+      });
+    } catch (e) {
+      console.error("Signal error", e);
+    }
+  };
+
+  const handleMessage = async (msg) => {
+    if (!pcRef.current) {
+      const pc = new RTCPeerConnection({
+        iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
+      });
+      const stream = localStream || await initMedia();
+      stream.getTracks().forEach(track => pc.addTrack(track, stream));
+      
+      pc.ontrack = (event) => {
+        setRemoteStream(event.streams[0]);
+        if (remoteVideoRef.current) remoteVideoRef.current.srcObject = event.streams[0];
+        setIsConnected(true);
+      };
+      
+      pc.onicecandidate = (event) => {
+        if (event.candidate) {
+          sendSignal({ candidate: event.candidate });
+        }
+      };
+      pcRef.current = pc;
+    }
+
+    const pc = pcRef.current;
+    if (msg.sdp) {
+      await pc.setRemoteDescription(new RTCSessionDescription(msg.sdp));
+      if (msg.sdp.type === "offer") {
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        sendSignal({ sdp: pc.localDescription });
+      }
+    } else if (msg.candidate) {
+      await pc.addIceCandidate(new RTCIceCandidate(msg.candidate));
+    }
+  };
+
+  const startPolling = useCallback(() => {
+    pollIntervalRef.current = setInterval(async () => {
+      try {
+        const res = await fetch(`${SIGNAL_URL}/poll?roomId=${roomId}&peerId=${myId}`);
+        const data = await res.json();
+        for (const m of data.messages) {
+          if (m.type === "message") {
+            await handleMessage(m.message);
+          }
+        }
+      } catch (e) {
+        console.error("Polling error", e);
+      }
+    }, 2000);
+  }, [roomId, myId, localStream]);
+
+  const leaveCall = () => {
+    if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+    if (pcRef.current) pcRef.current.close();
+    if (localStream) localStream.getTracks().forEach(t => t.stop());
+    setLocalStream(null);
+    setRemoteStream(null);
+    setIsConnected(false);
+  };
+
+  useEffect(() => {
+    startPolling();
+    return () => leaveCall();
+  }, [roomId]);
+
+  return {
+    localStream,
+    remoteStream,
+    isConnected,
+    localVideoRef,
+    remoteVideoRef,
+    initMedia,
+    startCall,
+    leaveCall
+  };
+}
+"""
+            wt(fe_src / "webrtc_client.js", client_js)
+
+            # ── webrtc_components.jsx (frontend ui components) ─────────────────────
+            ui_dir = fe_src / "ui"
+            ui_dir.mkdir(parents=True, exist_ok=True)
+            components_jsx = """\
+/**
+ * PyReact WebRTC UI Components (Fase 27)
+ * Provides premium UI.VideoCall and UI.AudioRoom components.
+ */
+import React from "react";
+import { useWebRTC } from "../webrtc_client";
+
+export function VideoCall({ roomId, options = {} }) {
+  const {
+    localStream,
+    remoteStream,
+    isConnected,
+    localVideoRef,
+    remoteVideoRef,
+    startCall,
+    leaveCall
+  } = useWebRTC(roomId);
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', padding: '20px', backgroundColor: '#0f172a', borderRadius: '12px', color: '#fff' }}>
+      <h3>Video Call: Room {roomId}</h3>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
+        <div>
+          <p>Local Video</p>
+          <video ref={localVideoRef} autoPlay playsInline muted style={{ width: '100%', borderRadius: '8px', border: '2px solid #3b82f6', backgroundColor: '#1e293b' }} />
+        </div>
+        <div>
+          <p>Remote Video {isConnected ? '(Connected)' : '(Waiting...)'}</p>
+          <video ref={remoteVideoRef} autoPlay playsInline style={{ width: '100%', borderRadius: '8px', border: isConnected ? '2px solid #10b981' : '2px dashed #64748b', backgroundColor: '#1e293b' }} />
+        </div>
+      </div>
+      <div style={{ display: 'flex', gap: '10px' }}>
+        <button onClick={startCall} style={{ padding: '10px 20px', backgroundColor: '#3b82f6', border: 'none', borderRadius: '6px', color: '#fff', cursor: 'pointer' }}>Start Call</button>
+        <button onClick={leaveCall} style={{ padding: '10px 20px', backgroundColor: '#ef4444', border: 'none', borderRadius: '6px', color: '#fff', cursor: 'pointer' }}>Leave Call</button>
+      </div>
+    </div>
+  );
+}
+
+export function AudioRoom({ roomId }) {
+  const {
+    isConnected,
+    startCall,
+    leaveCall
+  } = useWebRTC(roomId);
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '15px', padding: '20px', backgroundColor: '#1e293b', borderRadius: '12px', color: '#fff' }}>
+      <h3>Audio Conference: Room {roomId}</h3>
+      <p style={{ color: isConnected ? '#10b981' : '#94a3b8' }}>
+        {isConnected ? '🎙️ Connected to peer' : '⏳ Waiting for peer to join...'}
+      </p>
+      <div style={{ display: 'flex', gap: '10px' }}>
+        <button onClick={startCall} style={{ padding: '10px 20px', backgroundColor: '#10b981', border: 'none', borderRadius: '6px', color: '#fff', cursor: 'pointer' }}>Join Audio</button>
+        <button onClick={leaveCall} style={{ padding: '10px 20px', backgroundColor: '#f97316', border: 'none', borderRadius: '6px', color: '#fff', cursor: 'pointer' }}>Mute / Leave</button>
+      </div>
+    </div>
+  );
+}
+"""
+            wt(ui_dir / "webrtc_components.jsx", components_jsx)
+
+
+
 class PyToJsTranspiler(ast.NodeVisitor):
     def __init__(self):
         self.indent_level = 1
@@ -4001,5 +5056,3 @@ class PyToJsTranspiler(ast.NodeVisitor):
         indent = "  " * self.indent_level
         val = self.visit(node.value) if node.value else ""
         return f"{indent}return {val};"
-
-

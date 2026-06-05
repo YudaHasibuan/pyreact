@@ -92,5 +92,22 @@ class TestFase21(unittest.TestCase):
         self.assertIn("app.coolsite.org", dashboard_content)
         self.assertIn("DATABASE_URL", dashboard_content)
 
+    def test_cli_help_options(self):
+        import sys
+        from io import StringIO
+        from pyreact.cli import main
+        
+        # Test help options
+        for help_arg in ["-h", "--help", "-help", "help"]:
+            sys.argv = ["pyreact", help_arg]
+            old_stdout = sys.stdout
+            sys.stdout = StringIO()
+            try:
+                main()
+                output = sys.stdout.getvalue()
+                self.assertIn("Usage: pyreact <command> [options]", output)
+            finally:
+                sys.stdout = old_stdout
+
 if __name__ == '__main__':
     unittest.main()

@@ -11,6 +11,7 @@ class TT(Enum):
     SERVER = auto(); COMPONENT = auto(); STYLE = auto(); MODEL = auto()
     DATABASE = auto(); DEPENDENCIES = auto(); SHARED_STATE = auto()
     AGENT = auto(); PIPELINE = auto(); PAGES = auto(); REALTIME = auto()
+    GRAPHQL = auto(); RBAC = auto(); WEBRTC = auto()
     LBRACE = auto(); RBRACE = auto(); LPAREN = auto(); RPAREN = auto()
     COLON = auto(); COMMA = auto(); EQUALS = auto(); NEWLINE = auto()
     IDENTIFIER = auto(); STRING = auto(); NUMBER = auto(); BOOL = auto()
@@ -33,6 +34,7 @@ KEYWORDS = {
     "shared_state": TT.SHARED_STATE,
     "agent": TT.AGENT, "pipeline": TT.PIPELINE,
     "pages": TT.PAGES, "realtime": TT.REALTIME,
+    "graphql": TT.GRAPHQL, "rbac": TT.RBAC, "webrtc": TT.WEBRTC,
     "True": TT.BOOL, "False": TT.BOOL,
 }
 TokenType = TT  # alias for compat
@@ -88,7 +90,7 @@ class Lexer:
             if ch.isalpha() or ch == '_':
                 tok = self._read_ident()
                 self.tokens.append(tok)
-                if tok.type in (TT.SERVER, TT.STYLE, TT.COMPONENT, TT.MODEL, TT.DATABASE, TT.DEPENDENCIES, TT.SHARED_STATE, TT.AGENT, TT.PIPELINE, TT.PAGES, TT.REALTIME):
+                if tok.type in (TT.SERVER, TT.STYLE, TT.COMPONENT, TT.MODEL, TT.DATABASE, TT.DEPENDENCIES, TT.SHARED_STATE, TT.AGENT, TT.PIPELINE, TT.PAGES, TT.REALTIME, TT.GRAPHQL, TT.RBAC, TT.WEBRTC):
                     self._emit_block()
                 continue
 

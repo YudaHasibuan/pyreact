@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
 Name: pyreact-web
-Version: 0.1.0
+Version: 0.1.2
 Summary: The Python-Powered Fullstack Language
 Author: Yuda Hasibuan
 License: MIT
@@ -10,37 +10,50 @@ Requires-Dist: flask>=3.0.0
 Requires-Dist: flask-cors>=4.0.0
 Requires-Dist: jinja2>=3.1.0
 
-# PyReact 🚀
+# PyReact-Web 🚀
 
-**The Python-Powered Fullstack Language** — v1.2.0
+**Bahasa Web Fullstack Modern Bertenaga Python** — v1.4.0
 
-> Build beautiful AI-powered fullstack applications using a single language, a single file, and a single workflow.
+> Bangun aplikasi fullstack bertenaga AI yang indah menggunakan satu bahasa, satu berkas, dan satu alur kerja terpadu.
 
-**PyReact = Python Simplicity + React Power + AI Native Development**
+**PyReact = Kesederhanaan Python + Kekuatan React + Pengembangan AI-Native**
 
 ---
 
-## Quick Start
+## 📦 Instalasi & Memulai Cepat
+
+PyReact kini tersedia secara resmi di PyPI dengan nama package `pyreact-web`:
 
 ```bash
-# Install
-pip install -e .
+# Instal PyReact secara global
+pip install pyreact-web
 
-# Create new project
+# Buat proyek baru
 pyreact new myapp
 
-# Start dev servers
+# Masuk ke direktori dan jalankan server pengembangan Flask + Vite
 cd myapp
 pyreact dev
 ```
 
 ---
 
-## One File. Full Stack.
+## Satu Berkas. Stack Utuh (Full Stack).
+
+Berikut adalah contoh kode sederhana `.pyreact` yang menyatukan definisi database, logika backend RPC, rute halaman, gaya, komponen UI, hingga dukungan PWA offline dalam satu berkas tunggal:
 
 ```pyreact
+database {
+    model Forecast {
+        id = primary_key()
+        value = integer()
+        created_at = timestamp()
+    }
+}
+
 server {
     def forecast(data):
+        # Logika backend Python dengan akses database ORM & AI
         return {"result": [1, 4, 9, 16]}
 }
 
@@ -59,8 +72,9 @@ component Dashboard():
 
     return (
         <UI.Page>
-            <UI.Navbar title="PyReact App" />
-            <UI.Button onClick={runForecast}>Run Forecast</UI.Button>
+            <UI.Navbar title="Aplikasi PyReact" />
+            <UI.NetworkStatus />
+            <UI.Button onClick={runForecast}>Jalankan Forecast</UI.Button>
             <UI.Chart type="line" data={result} />
         </UI.Page>
     )
@@ -68,191 +82,75 @@ component Dashboard():
 style {
     primary = "#6366f1"
     radius  = "16px"
+    background = "#0b0f19"
 }
 ```
 
-Dikompilasi menjadi:
-- ✅ **Flask backend** dengan auto-generated REST endpoints
-- ✅ **React frontend** + Tailwind CSS + react-router-dom v6
-- ✅ **PyBridge™ RPC** — zero `fetch()` / axios boilerplate
-- ✅ **File-System Routing** — pages block & folder `pages/`
-- ✅ **Vite** production build
-
 ---
 
-## CLI Commands
+## ⚡ Fitur Utama (Fase 15 - 23 Selesai)
 
-| Command | Description |
-|---|---|
-| `pyreact new <name>` | Create a new project |
-| `pyreact dev` | Start Flask + Vite dev servers |
-| `pyreact dev --heal` | Dev mode + AI self-healing |
-| `pyreact build` | Build for production |
-| `pyreact compile [file]` | Compile → Flask + React source |
-| `pyreact compile [file] --heal` | Compile + AI auto-heal error |
-| `pyreact compile [file] --heal --model codellama` | Pilih model Ollama |
-| `pyreact serve` | Serve production via Gunicorn/Waitress |
-| `pyreact generate component <Name>` | Scaffold a component |
-| `pyreact ai "<prompt>"` | Generate kode dengan AI lokal (gratis) |
-| `pyreact install <package>` | Install dari PPR Registry |
-| `pyreact hub` | Lihat Hub Marketplace templates |
-| `pyreact test` | Run backend + frontend tests |
-
----
-
-## Fase 15: Self-Healing Compiler 🩺
-
-Ketika terjadi syntax error, PyReact bisa memperbaikinya secara otomatis via Ollama:
-
+### 🩺 Self-Healing Compiler [Fase 15]
+Mendeteksi kesalahan sintaksis secara otomatis saat kompilasi dan memperbaikinya secara dinamis menggunakan model AI lokal (via Ollama) atau cadangan cloud.
 ```bash
 pyreact compile app.pyreact --heal
 ```
 
-```
-+==================================================+
-|    PyReact Self-Healing Compiler  [Fase 15]     |
-+==================================================+
+### 🗺️ File-System & Declarative Routing [Fase 16]
+Mendukung routing deklaratif via blok `pages { ... }` serta routing berbasis struktur folder ala Next.js (contoh: `pages/blog/[slug].pyreact`) lengkap dengan otorisasi rute (*route guards*).
 
-[ERROR] Kompilasi gagal: Expected IDENTIFIER, got LBRACE '{'
-[HEAL]  Model terpilih: gemma4:31b-cloud
-[HEAL]  Mengirim ke Ollama (Percobaan 1/3)...
-[HEAL]  Self-Healing BERHASIL pada percobaan ke-1!
+### 🛡️ Type System & Validasi [Fase 17]
+Menjamin keamanan tipe data dengan anotasi tipe bawaan Python serta decorator seperti `@validate` untuk memvalidasi masukan kueri sebelum disimpan ke database.
 
-[HEAL]  Perubahan:
-  - component {
-  + component MyComponent():
-```
+### 🔄 Sinkronisasi Real-time [Fase 18]
+Sinkronisasi data dua arah antara backend dan klien secara instan menggunakan jalur WebSocket atau Server-Sent Events (SSE).
 
-**Fitur:**
-- Auto-detect model Ollama terbaik (codellama → qwen2.5-coder → gemma4 → llama3)
-- Iterative retry hingga 3x
-- Diff viewer + backup otomatis
-- Rule-based fallback jika Ollama offline
-
----
-
-## Fase 16: File-System Routing 🗺️
-
-### Pages Block (Explicit)
-
-```pyreact
-pages {
-    Home      = "/"
-    About     = "/about"
-    Blog      = "/blog"
-    Dashboard = "/dashboard" [guard]           # Protected route
-    Settings  = "/settings"  [guard, layout=App] # Guard + Layout
-    Login     = "/login"
-}
-```
-
-### File-System Routing (Next.js Style)
-
-```
-pages/
-  index.pyreact          → /
-  about.pyreact          → /about
-  blog/index.pyreact     → /blog
-  blog/[slug].pyreact    → /blog/:slug  (dynamic)
-  user/[id].pyreact      → /user/:id    (dynamic)
-  404.pyreact            → * (Not Found)
-```
-
-**Output App.jsx:**
-```jsx
-<BrowserRouter>
-  <Routes>
-    <Route path="/"          element={<Home />} />
-    <Route path="/dashboard" element={<RequireAuth><Dashboard /></RequireAuth>} />
-    <Route path="/blog/:slug" element={<BlogSlug />} />
-    <Route path="*"          element={<NotFound />} />
-  </Routes>
-</BrowserRouter>
-```
-
----
-
-## Built-in UI Components (30+)
-
-```
-UI.Page      UI.Navbar    UI.Sidebar    UI.Card
-UI.Button    UI.Input     UI.TextArea   UI.Select
-UI.Table     UI.DataGrid  UI.Chart      UI.MetricCard
-UI.Alert     UI.Toast     UI.Modal      UI.Spinner
-UI.Badge     UI.Tabs      UI.Dropdown   UI.Accordion
-UI.Calendar  UI.Upload    UI.Chatbot    UI.Heading
-UI.Text      UI.Divider   UI.Link       UI.NavLink
-UI.useAuth()
-```
-
----
-
-## Compiler Architecture
-
-```
-app.pyreact
-    │
-    ▼
- Lexer → Parser → AST → CodeGenerator
-                          │
-              ┌───────────┼───────────────┐
-           Flask        React          Router
-          backend      frontend     (react-router-dom v6)
-```
-
-**Fase 15** — Self-Healing: `compiler/healer.py`
-**Fase 16** — Routing Engine: `compiler/router.py`
-
----
-
-## Output Structure
-
-```
-dist/
-├── backend/
-│   ├── app.py           ← Flask application
-│   ├── routes.py        ← Auto-generated endpoints
-│   ├── generated_api.py ← server {} Python code
-│   └── requirements.txt
-└── frontend/
-    ├── package.json     ← Includes react-router-dom
-    └── src/
-        ├── App.jsx      ← BrowserRouter + Routes
-        ├── pybridge.js  ← PyBridge™ RPC client
-        ├── _routes.txt  ← Router manifest
-        └── ui/
-            └── components.jsx
-```
-
----
-
-## Demo
-
+### 🧪 Framework Pengujian Terintegrasi [Fase 19]
+Lakukan pengujian unit komponen, pengujian API backend, hingga pengujian fungsional *End-to-End* (E2E) berbasis Playwright hanya dengan satu perintah:
 ```bash
-# Demo routing lengkap (Fase 16)
-pyreact compile demo_routing.pyreact --out dist_routing
-
-# Test self-healing (Fase 15) — butuh Ollama berjalan
-pyreact compile broken_demo.pyreact --heal
+pyreact test
 ```
+
+### 💻 Ekstensi VS Code [Fase 20]
+Peralatan editor lengkap mulai dari *syntax highlighting* berkas `.pyreact`, autocomplete berbasis LSP (Language Server Protocol), diagnosa eror inline, hingga panel *live preview* terintegrasi.
+
+### ☁️ Deployment PyReact Cloud [Fase 21]
+Unggah aplikasi produksi Anda ke klaster PyReact Cloud dengan satu baris perintah, lengkap dengan manajemen domain kustom, sertifikat SSL, dan dasbor analitik:
+```bash
+pyreact deploy
+```
+
+### 🌐 Hybrid Server-Side Rendering (SSR) [Fase 22]
+Pre-rendering kode JSX frontend langsung dari sisi server Python (Flask/FastAPI) tanpa memerlukan runtime Node.js eksternal, dikombinasikan dengan hidrasi klien dinamis via `ReactDOM.hydrateRoot`.
+
+### 📴 Offline-First PWA & Background Sync [Fase 23]
+- **Web App Manifest & Service Worker**: Pembuatan otomatis `manifest.json` dan `sw.js` untuk membuat aplikasi web dapat diinstal di HP/Desktop dan diakses tanpa koneksi internet.
+- **Offline RPC Queue**: Menyimpan panggilan fungsi `server.*` saat perangkat luring (offline) ke dalam antrean, lalu memutarnya kembali secara otomatis saat terhubung kembali (online).
+- **Local State Caching**: Menyimpan status state komponen (`shared_state`) secara otomatis ke LocalStorage.
+- **Indikator Jaringan**: Menampilkan status koneksi real-time melalui komponen bawaan `<UI.NetworkStatus />`.
 
 ---
 
-## Roadmap
+## 🗺️ Peta Jalan & Status Proyek (Roadmap)
 
 | Fase | Fitur | Status |
 |---|---|---|
-| 1–14 | Compiler, PyBridge, UI, Database, AI Agents, PPR | ✅ Done |
-| 15 | Self-Healing Compiler (Ollama) | ✅ Done |
-| 16 | File-System Routing & Pages Block | ✅ Done |
-| 17 | Type System & Validasi | 🔲 Planned |
-| 18 | Real-Time & WebSocket | 🔲 Planned |
-| 19 | Testing Framework | 🔲 Planned |
-| 20 | VSCode Extension | 🔲 Planned |
-| 21 | PyReact Cloud | 🔲 Planned |
+| **1–14** | Lexer, Parser, AST, RPC, DB ORM, AI Agents, PPR Registry | ✅ Selesai |
+| **15** | Self-Healing Compiler (Bertenaga AI) | ✅ Selesai |
+| **16** | File-System & Pages Routing | ✅ Selesai |
+| **17** | Type System & Validasi Request | ✅ Selesai |
+| **18** | Real-Time Sync & Client WebSocket | ✅ Selesai |
+| **19** | Framework Pengujian E2E (Playwright) | ✅ Selesai |
+| **20** | Ekstensi VS Code (Sintaks, LSP, Live Preview) | ✅ Selesai |
+| **21** | One-Command Cloud Deploy & Dasbor Analitik | ✅ Selesai |
+| **22** | Hybrid Server-Side Rendering (SSR) | ✅ Selesai |
+| **23** | Offline-First PWA & Background Sync | ✅ Selesai |
+| **24** | Real-time Collaborative State & WebSockets | 🔲 Direncanakan |
+| **25** | GraphQL API Engine & Type-Safe Queries | 🔲 Direncanakan |
+| **26** | RBAC (Role-Based Access Control) & Guards | 🔲 Direncanakan |
 
 ---
 
-## License
+## 📄 Lisensi
 
 MIT © Yuda Hasibuan

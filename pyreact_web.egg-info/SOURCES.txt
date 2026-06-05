@@ -19,6 +19,7 @@ pyreact_web.egg-info/dependency_links.txt
 pyreact_web.egg-info/entry_points.txt
 pyreact_web.egg-info/requires.txt
 pyreact_web.egg-info/top_level.txt
+test/test_cli_templates.py
 test/test_fase12.py
 test/test_fase13.py
 test/test_fase14.py
@@ -29,3 +30,8 @@ test/test_fase20.py
 test/test_fase21.py
 test/test_fase22.py
 test/test_fase23.py
+test/test_fase24.py
+test/test_fase25.py
+test/test_fase26.py
+test/test_fase27.py
+test/test_fase28.py

@@ -1,6 +1,6 @@
 # Product Requirement Document (PRD): PyReact v1.2
 
-**Status:** Updated | **Version:** 1.2.0 | **Author:** Yuda Hasibuan | **Date:** 4 Juni 2026
+**Status:** Updated | **Version:** 1.2.1 | **Author:** Yuda Hasibuan | **Date:** 5 Juni 2026
 
 ---
 
@@ -97,6 +97,8 @@ Satu file `.pyreact` terbagi menjadi beberapa blok deklaratif:
 
 - **R-3.4.1 (Live-Reload):** `pyreact dev` mendeteksi perubahan file `.pyreact` dan memicu kompilasi ulang → Vite HMR. **[SELESAI]**
 - **R-3.4.2 (Cross-Platform):** Perintah `serve` dan `dev` berjalan di Windows (Waitress) dan Unix (Gunicorn). **[SELESAI]**
+- **R-3.4.3 (Help Flags):** CLI menerima `-h`, `--help`, `-help`, dan `help` sebagai argumen untuk menampilkan banner dan daftar perintah lengkap. **[SELESAI]**
+- **R-3.4.4 (Windows Unicode Safety):** `sys.stdout` dan `sys.stderr` dikonfigurasi dengan `errors="replace"` di awal eksekusi CLI agar banner berisi karakter Unicode (⚡, box-drawing) tidak menyebabkan `UnicodeEncodeError` pada terminal Windows cp1252. **[SELESAI]**
 
 ### 3.5 Self-Healing Compiler *(Fase 15)*
 
@@ -324,6 +326,9 @@ pages/
 - [x] Manajemen variabel secrets (`pyreact secrets set/list/remove`) yang disimpan di `.pyreact_secrets.json` dan dilekatkan pada deployment.
 - [x] Manajemen custom domain mapping (`pyreact domain add/list/remove`) dengan integrasi record CNAME SSL.
 - [x] Replika dashboard pemantauan cloud lokal interaktif (`dist/dashboard.html`) dengan visualisasi grafik live requests/second dan latency memanfaatkan Chart.js.
+- [x] Penambahan alias `-help` dan `help` pada CLI agar pengguna yang belum hafal flag `--help` tetap mendapat panduan. **[v1.2.1]**
+- [x] Perbaikan `UnicodeEncodeError` di terminal Windows dengan konfigurasi `sys.stdout/stderr.reconfigure(errors="replace")` pada entry point CLI. **[v1.2.1]**
+- [x] Unit test `test_cli_help_options` di `test/test_fase21.py` yang memverifikasi keempat argumen bantuan (`-h`, `--help`, `-help`, `help`) menghasilkan output usage yang benar. **[v1.2.1]**
 
 ### Fase 22: Server-Side Rendering (SSR) Hybrid ✅ Selesai
 
@@ -348,6 +353,13 @@ pages/
 ## 5. CLI Commands Lengkap
 
 ```bash
+# Help (semua alias berikut menampilkan banner + daftar perintah)
+pyreact
+pyreact -h
+pyreact --help
+pyreact -help
+pyreact help
+
 # Project
 pyreact new <name>
 pyreact new <name> --template <nama>       # saas | ai-dashboard | landing-page
@@ -388,6 +400,11 @@ pyreact install <package>
 pyreact publish <file>
 pyreact ppr
 pyreact hub
+
+# Cloud
+pyreact deploy
+pyreact secrets [list|set <KEY> <VALUE>|remove <KEY>]
+pyreact domain  [list|add <domain>|remove <domain>]
 
 # Testing
 pyreact test
@@ -457,6 +474,17 @@ Auth:        UI.useAuth()
 ---
 
 ## 9. Riwayat Pengembangan / Log Histori
+
+**5 Juni 2026 — v1.2.2: Real-time, GraphQL, and RBAC Integration (Fase 24-26):**
+- Implementasi sinkronisasi state kolaboratif real-time berbasis CRDT-lite (LWW-Register & Vector Clock) di frontend (`crdt.js` / `useRealtimeChannel`) dan broadcast helper di backend (`crdt_broadcast.py`).
+- Implementasi API Engine GraphQL dengan parser SDL skema, endpoint Flask/FastAPI (`/graphql`), serta hook client-side caching (`useQuery` / `useMutation`) di `graphql_client.js`.
+- Integrasi sistem otentikasi & otorisasi RBAC (Role-Based Access Control) dengan decorator backend (`@role_required`, `@permission_required`) dan komponen pelindung client-side (`<RBACGuard>`, `useRBAC`, `RBACProvider`).
+- Penambahan 3 test suite baru (`test_fase24.py`, `test_fase25.py`, `test_fase26.py`) dengan 50 test case baru yang meluluskan total 82 test case di seluruh suite pengujian compiler.
+
+**5 Juni 2026 — v1.2.1: CLI Help Flags & Windows Unicode Fix:**
+- Penambahan alias `-help` dan `help` pada fungsi `main()` di `pyreact/cli.py` sehingga pengguna dapat melihat panduan tanpa hafal flag eksak.
+- Penambahan blok `sys.stdout/stderr.reconfigure(errors="replace")` di awal `cli.py` untuk mencegah `UnicodeEncodeError` saat mencetak banner berisi karakter ⚡ dan box-drawing di terminal Windows (cp1252).
+- Penambahan unit test `test_cli_help_options` di `test/test_fase21.py` — memverifikasi seluruh empat argumen bantuan menghasilkan output `Usage: pyreact <command> [options]` yang benar. Total suite: 32 test, semua lulus.
 
 **5 Juni 2026 — Fase 17: Type System & Validasi:**
 - Upgrade parser AST (`parser.py`) untuk mendukung anotasi tipe data parameter dan return type fungsi di blok `server`.
@@ -538,23 +566,50 @@ Auth:        UI.useAuth()
 - [x] Mekanisme local state caching otomatis memanfaatkan IndexedDB/LocalStorage
 - [x] Penyediaan komponen UI indikator status koneksi bawaan (`UI.NetworkStatus`)
 
-### Fase 24: Real-time Collaborative State & WebSockets 🔲 Planned
-- [ ] Implementasi backend WebSocket handler di Flask/FastAPI (blok `realtime` support)
-- [ ] Auto-synchronization `shared_state` lintas client menggunakan WebSocket broadcast
-- [ ] Mekanisme deteksi konflik dan state merging (CRDT-lite) secara otomatis
-- [ ] Penyediaan React hooks real-time (`useRealtimeChannel`)
+### Fase 24: Real-time Collaborative State & WebSockets ✅ Completed (5 Juni 2026)
+- [x] Implementasi backend WebSocket handler di Flask/FastAPI (blok `realtime` support)
+- [x] Auto-synchronization `shared_state` lintas client menggunakan WebSocket broadcast
+- [x] Mekanisme deteksi konflik dan state merging (CRDT-lite) secara otomatis
+- [x] Penyediaan React hooks real-time (`useRealtimeChannel`)
 
-### Fase 25: GraphQL API Engine & Type-Safe Queries 🔲 Planned
-- [ ] Auto-generate schema GraphQL berdasarkan model database & ORM
-- [ ] Penyediaan server endpoint `/graphql` bawaan pada target Flask & FastAPI
-- [ ] Auto-generasi hook React klien (`useQuery` / `useMutation`) dengan filter/sorting deklaratif
+### Fase 25: GraphQL API Engine & Type-Safe Queries ✅ Completed (5 Juni 2026)
+- [x] Auto-generate schema GraphQL berdasarkan model database & ORM
+- [x] Penyediaan server endpoint `/graphql` bawaan pada target Flask & FastAPI
+- [x] Auto-generasi hook React klien (`useQuery` / `useMutation`) dengan filter/sorting deklaratif
 
-### Fase 26: RBAC (Role-Based Access Control) & Route Guards 🔲 Planned
-- [ ] Integrasi otentikasi JWT bawaan di backend dan enkripsi token di klien
-- [ ] Decorator backend Python `@role_required` untuk proteksi endpoint RPC/API secara terperinci
-- [ ] Peningkatan dynamic route guards di frontend untuk membatasi navigasi berbasis peran pengguna
+### Fase 26: RBAC (Role-Based Access Control) & Route Guards ✅ Completed (5 Juni 2026)
+- [x] Integrasi otentikasi JWT bawaan di backend dan enkripsi token di klien
+- [x] Decorator backend Python `@role_required` untuk proteksi endpoint RPC/API secara terperinci
+- [x] Peningkatan dynamic route guards di frontend untuk membatasi navigasi berbasis peran pengguna
+
+### Fase 27: WebRTC P2P & Audio/Video Streaming ✅ Completed (5 Juni 2026)
+- [x] Auto-generasi protokol signaling terpadu pada sisi backend server (WebSocket fallback)
+- [x] Implementasi WebRTC Peer-to-Peer handler otomatis pada sisi client React
+- [x] Penyediaan komponen UI siap pakai untuk panggilan audio/video (`UI.VideoCall`, `UI.AudioRoom`)
+- [x] Mekanisme screen-sharing dan sinkronisasi media stream zero-config
+
+### Fase 28: Multi-Database Support & Distributed Transactions ✅ Completed (5 Juni 2026)
+- [x] Integrasi driver database PostgreSQL, MongoDB, dan Redis di samping SQLite
+- [x] Penyediaan mekanisme dynamic connection pooling dan setup cluster replikasi
+- [x] Implementasi transaction manager terdistribusi untuk mendukung multi-database write yang atomik
+- [x] Auto-migration engine adaptif yang mendukung konversi skema lintas tipe database (SQL & NoSQL)
+
+### Fase 29: AI-Driven Auto-Scaling & Edge Computing 🔲 Planned
+- [ ] Integrasi triggers auto-scaling berbasis beban request dan throughput memori pada backend serverless
+- [ ] Penyempurnaan kompilasi target WebAssembly (WASM) untuk running engine PyReact di edge nodes (Cloudflare Workers, Vercel Edge)
+- [ ] AI agent telemetry tersemat untuk prediksi latensi dan optimalisasi load balancing pintar
+- [ ] Reduksi overhead booting runtime Python pada edge environment hingga < 10ms
+
+### Fase 30: Native App Transpilation (React Native & Flutter) 🔲 Planned
+- [ ] Kompilasi langsung file `.pyreact` menjadi native component React Native / Flutter
+- [ ] Abstraksi terpadu untuk sensor hardware (kamera, GPS, akselerometer, bluetooth)
+- [ ] Setup module push-notification multiplatform (APNS & FCM) bawaan compiler pipeline
+- [ ] Build workflow otomatis untuk menghasilkan file `.apk` dan `.ipa` langsung dari perintah CLI
 
 ---
 
-*PyReact PRD v1.4.0 — Last updated: 5 Juni 2026*
+*PyReact PRD v1.3.2 — Last updated: 5 Juni 2026*
 *© Yuda Hasibuan — MIT License*
+
+
+
