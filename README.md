@@ -3,139 +3,141 @@
 **Bahasa Web Fullstack Modern Bertenaga Python** — v1.4.0
 
 > Bangun aplikasi fullstack bertenaga AI yang indah menggunakan satu bahasa, satu berkas, dan satu alur kerja terpadu.
+>
+> **PyReact = Kesederhanaan Python + Kekuatan React + Pengembangan AI-Native**
 
-**PyReact = Kesederhanaan Python + Kekuatan React + Pengembangan AI-Native**
+---
+
+## 📌 Navigasi Cepat
+* [📦 Instalasi & Memulai Cepat](#-instalasi--memulai-cepat)
+* [🗺️ Mental Model untuk Developer](#-mental-model-untuk-developer)
+* [📂 Konvensi Struktur Berkas](#-konvensi-struktur-berkas)
+* [📄 Satu Berkas, Stack Utuh (Full Stack)](#-satu-berkas-stack-utuh-full-stack)
+* [⚡ Fitur Utama](#-fitur-utama)
+* [📚 Panduan & Referensi Penting](#-panduan--referensi-penting)
 
 ---
 
 ## 📦 Instalasi & Memulai Cepat
 
-PyReact kini tersedia secara resmi di PyPI dengan nama package `pyreact-web`:
+PyReact tersedia secara resmi di PyPI dengan nama package `pyreact-web`:
 
 ```bash
-# Instal PyReact secara global
+# 1. Instal PyReact secara global atau di venv
 pip install pyreact-web
 
-# Buat proyek baru
+# 2. Buat proyek baru
 pyreact new myapp
 
-# Masuk ke direktori dan jalankan server pengembangan Flask + Vite
+# 3. Masuk ke direktori proyek
 cd myapp
+
+# 4. Jalankan server pengembangan Flask (Backend) + Vite (Frontend)
 pyreact dev
 ```
 
 ---
 
-## Satu Berkas. Stack Utuh (Full Stack).
+## 🗺️ Mental Model untuk Developer
 
-Berikut adalah contoh kode sederhana `.pyreact` yang menyatukan definisi database, logika backend RPC, rute halaman, gaya, komponen UI, hingga dukungan PWA offline dalam satu berkas tunggal:
+PyReact dirancang agar familiar bagi Anda yang sudah terbiasa dengan ekosistem Flask (Python) dan React (JavaScript).
 
-```pyreact
+### 🐍 Dari Flask ke PyReact
+* Tidak perlu mendefinisikan rute `@app.route` manual. Cukup tulis fungsi Python biasa di dalam blok `server { }`. Fungsi tersebut otomatis diekspos sebagai API aman.
+* Pengiriman data menggunakan parameter fungsi biasa (dengan bantuan Pydantic).
+
+### ⚛️ Dari React ke PyReact
+* State dideklarasikan seperti React hook biasa tetapi dalam snake_case Python: `val, setVal = use_state(initial)`.
+* Tidak ada proses impor React manual, semuanya ditangani otomatis oleh transpiler saat kompilasi.
+
+---
+
+## 📂 Konvensi Struktur Berkas
+
+Setiap proyek PyReact menghasilkan struktur standar untuk memudahkan AI (seperti Cursor/Claude/Copilot) memahami kode Anda:
+
+```
+myapp/
+├── app.pyreact          ← File entry point utama aplikasi Anda
+├── AGENTS.md            ← Panduan bahasa PyReact khusus untuk asisten AI
+├── COOKBOOK.md          ← Koleksi resep kode siap pakai
+├── .cursorrules         ← Aturan pengerjaan otomatis untuk Cursor IDE
+└── components/          ← Direktori untuk meletakkan komponen tambahan
+```
+
+---
+
+## 📄 Satu Berkas, Stack Utuh (Full Stack)
+
+Berikut adalah contoh aplikasi minimal `.pyreact` yang menggunakan database, API, navigasi halaman, dan komponen UI bawaan:
+
+```python
+# app.pyreact
+# @pyreact app
+# @name: Demo App
+# @description: Contoh kesatuan frontend-backend dalam satu file
+
 database {
-    model Forecast {
-        id = primary_key()
-        value = integer()
-        created_at = timestamp()
-    }
+    provider = "sqlite"
+    url = "tasks.db"
 }
 
 server {
-    def forecast(data):
-        # Logika backend Python dengan akses database ORM & AI
-        return {"result": [1, 4, 9, 16]}
+    class DbTask(db.Model):
+        id = db.Column(db.Integer, primary_key=True)
+        title = db.Column(db.String(100), nullable=False)
+
+    def get_tasks():
+        tasks = DbTask.query.all()
+        return [{"id": t.id, "title": t.title} for t in tasks]
 }
 
-pages {
-    Home      = "/"
-    Dashboard = "/dashboard" [guard]
-    Login     = "/login"
-}
+component Home():
+    tasks, setTasks = use_state([])
 
-component Dashboard():
-    result, setResult = use_state(None)
+    def load():
+        res = server.get_tasks()
+        setTasks(res)
 
-    def runForecast():
-        data = server.forecast([])
-        setResult(data)
+    use_effect(def():
+        load()
+    , [])
 
     return (
         <UI.Page>
-            <UI.Navbar title="Aplikasi PyReact" />
-            <UI.NetworkStatus />
-            <UI.Button onClick={runForecast}>Jalankan Forecast</UI.Button>
-            <UI.Chart type="line" data={result} />
+            <UI.Navbar title="PyReact App" />
+            <div className="pt-24 max-w-xl mx-auto px-4">
+                <UI.Card title="Tasks List">
+                    {tasks.map(t => (
+                        <UI.Text key={t.id} className="p-2 border-b border-slate-700">{t.title}</UI.Text>
+                    ))}
+                </UI.Card>
+            </div>
         </UI.Page>
     )
 
 style {
     primary = "#6366f1"
-    radius  = "16px"
-    background = "#0b0f19"
+    radius  = "12px"
 }
 ```
 
 ---
 
-## ⚡ Fitur Utama (Fase 15 - 23 Selesai)
+## ⚡ Fitur Utama
 
-### 🩺 Self-Healing Compiler [Fase 15]
-Mendeteksi kesalahan sintaksis secara otomatis saat kompilasi dan memperbaikinya secara dinamis menggunakan model AI lokal (via Ollama) atau cadangan cloud.
-```bash
-pyreact compile app.pyreact --heal
-```
-
-### 🗺️ File-System & Declarative Routing [Fase 16]
-Mendukung routing deklaratif via blok `pages { ... }` serta routing berbasis struktur folder ala Next.js (contoh: `pages/blog/[slug].pyreact`) lengkap dengan otorisasi rute (*route guards*).
-
-### 🛡️ Type System & Validasi [Fase 17]
-Menjamin keamanan tipe data dengan anotasi tipe bawaan Python serta decorator seperti `@validate` untuk memvalidasi masukan kueri sebelum disimpan ke database.
-
-### 🔄 Sinkronisasi Real-time [Fase 18]
-Sinkronisasi data dua arah antara backend dan klien secara instan menggunakan jalur WebSocket atau Server-Sent Events (SSE).
-
-### 🧪 Framework Pengujian Terintegrasi [Fase 19]
-Lakukan pengujian unit komponen, pengujian API backend, hingga pengujian fungsional *End-to-End* (E2E) berbasis Playwright hanya dengan satu perintah:
-```bash
-pyreact test
-```
-
-### 💻 Ekstensi VS Code [Fase 20]
-Peralatan editor lengkap mulai dari *syntax highlighting* berkas `.pyreact`, autocomplete berbasis LSP (Language Server Protocol), diagnosa eror inline, hingga panel *live preview* terintegrasi.
-
-### ☁️ Deployment PyReact Cloud [Fase 21]
-Unggah aplikasi produksi Anda ke klaster PyReact Cloud dengan satu baris perintah, lengkap dengan manajemen domain kustom, sertifikat SSL, dan dasbor analitik:
-```bash
-pyreact deploy
-```
-
-### 🌐 Hybrid Server-Side Rendering (SSR) [Fase 22]
-Pre-rendering kode JSX frontend langsung dari sisi server Python (Flask/FastAPI) tanpa memerlukan runtime Node.js eksternal, dikombinasikan dengan hidrasi klien dinamis via `ReactDOM.hydrateRoot`.
-
-### 📴 Offline-First PWA & Background Sync [Fase 23]
-- **Web App Manifest & Service Worker**: Pembuatan otomatis `manifest.json` dan `sw.js` untuk membuat aplikasi web dapat diinstal di HP/Desktop dan diakses tanpa koneksi internet.
-- **Offline RPC Queue**: Menyimpan panggilan fungsi `server.*` saat perangkat luring (offline) ke dalam antrean, lalu memutarnya kembali secara otomatis saat terhubung kembali (online).
-- **Local State Caching**: Menyimpan status state komponen (`shared_state`) secara otomatis ke LocalStorage.
-- **Indikator Jaringan**: Menampilkan status koneksi real-time melalui komponen bawaan `<UI.NetworkStatus />`.
+* **🩺 Self-Healing Compiler**: Jalankan dengan `pyreact dev --heal` untuk memicu pemulihan AI otomatis (via Ollama) jika terdapat kesalahan sintaksis.
+* **🌐 Hybrid Server-Side Rendering (SSR)**: Pre-rendering halaman di backend Python untuk performa SEO terbaik tanpa Node.js server.
+* **📴 Offline-First PWA**: Dukungan otomatis Service Worker (`sw.js`) dan Offline RPC Queue untuk menyimpan transaksi klien saat luring.
+* **🔄 WebSocket & Real-time**: Sinkronisasi state instan antar user via blok `realtime { }`.
 
 ---
 
-## 🗺️ Peta Jalan & Status Proyek (Roadmap)
+## 📚 Panduan & Referensi Penting
 
-| Fase | Fitur | Status |
-|---|---|---|
-| **1–14** | Lexer, Parser, AST, RPC, DB ORM, AI Agents, PPR Registry | ✅ Selesai |
-| **15** | Self-Healing Compiler (Bertenaga AI) | ✅ Selesai |
-| **16** | File-System & Pages Routing | ✅ Selesai |
-| **17** | Type System & Validasi Request | ✅ Selesai |
-| **18** | Real-Time Sync & Client WebSocket | ✅ Selesai |
-| **19** | Framework Pengujian E2E (Playwright) | ✅ Selesai |
-| **20** | Ekstensi VS Code (Sintaks, LSP, Live Preview) | ✅ Selesai |
-| **21** | One-Command Cloud Deploy & Dasbor Analitik | ✅ Selesai |
-| **22** | Hybrid Server-Side Rendering (SSR) | ✅ Selesai |
-| **23** | Offline-First PWA & Background Sync | ✅ Selesai |
-| **24** | Real-time Collaborative State & WebSockets | 🔲 Direncanakan |
-| **25** | GraphQL API Engine & Type-Safe Queries | 🔲 Direncanakan |
-| **26** | RBAC (Role-Based Access Control) & Guards | 🔲 Direncanakan |
+Kami menyediakan dokumentasi khusus di dalam proyek ini:
+* **[AGENTS.md](file:///c:/Users/Administrator/Downloads/Project/1/AGENTS.md)**: Gunakan ini sebagai referensi sintaksis lengkap. **Sangat direkomendasikan untuk dibaca oleh asisten AI** Anda sebelum melakukan pengkodean.
+* **[COOKBOOK.md](file:///c:/Users/Administrator/Downloads/Project/1/COOKBOOK.md)**: Berisi 5 resep pola pengerjaan umum (CRUD, Login Auth, File Upload, Chart Dashboard, Real-time Collab) yang dapat disalin langsung.
 
 ---
 

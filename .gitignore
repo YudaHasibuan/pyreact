@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+*.db
+.pytest_cache/
+brain/
+test_gql_out/
+test_pwa_out/
+test_ssr_out/
+test_webrtc_out/
+dist_routing/
+error_test.pyreact
+*.egg-info/

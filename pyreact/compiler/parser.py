@@ -24,6 +24,25 @@ class ProgramNode:
     graphql:      Optional["GraphQLBlock"]      = None
     rbac:         Optional["RBACBlock"]         = None
     webrtc:       Optional["WebRTCBlock"]       = None
+    middleware:   Optional["MiddlewareBlock"]   = None
+    locale:       Optional["LocaleBlock"]       = None  # i18n support
+    hooks:        List["HookNode"]              = field(default_factory=list)
+
+
+@dataclass
+class LocaleBlock:
+    """i18n / Internationalization support."""
+    default: str = "en"
+    supported: List[str] = field(default_factory=lambda: ["en"])
+    translations: Dict[str, Dict[str, str]] = field(default_factory=dict)
+    raw: str = ""
+
+
+@dataclass
+class MiddlewareBlock:
+    """Fase — Middleware / Request Interceptors."""
+    raw: str = ""
+    functions: List[FuncDef] = field(default_factory=list)
 
 
 @dataclass
@@ -106,13 +125,66 @@ class HandlerDef:
     body: str
 
 @dataclass
+class EffectDef:
+    body: str
+    deps: str = "[]"
+
+
+@dataclass
+class RefVar:
+    """use_ref(initial) → useRef(initial)"""
+    name:    str
+    initial: str = "null"
+
+
+@dataclass
+class MemoVar:
+    """val = use_memo(def(): expr, [deps]) → useMemo(() => expr, deps)"""
+    name:  str
+    expr:  str
+    deps:  str = "[]"
+
+
+@dataclass
+class CallbackVar:
+    """fn = use_callback(def(): ..., [deps]) → useCallback(() => ..., deps)"""
+    name:  str
+    body:  str
+    deps:  str = "[]"
+
+
+@dataclass
+class ReducerVar:
+    """state, dispatch = use_reducer(reducer, initial) → useReducer(reducer, initial)"""
+    state:    str
+    dispatch: str
+    reducer:  str
+    initial:  str = "null"
+
+
+@dataclass
+class HookNode:
+    """Custom React hook block: hook useName(): ..."""
+    name:     str
+    raw_body: str
+    params:   List[str]       = field(default_factory=list)
+    states:   List[StateVar]  = field(default_factory=list)
+    effects:  List[EffectDef] = field(default_factory=list)
+    handlers: List[HandlerDef] = field(default_factory=list)
+
+@dataclass
 class ComponentNode:
     name:      str
     params:    List[str]           = field(default_factory=list)
     states:    List[StateVar]      = field(default_factory=list)
     handlers:  List[HandlerDef]    = field(default_factory=list)
+    effects:   List[EffectDef]     = field(default_factory=list)
     jsx:       str                 = ""
     raw_body:  str                 = ""
+    refs:      List["RefVar"]      = field(default_factory=list)
+    memos:     List["MemoVar"]     = field(default_factory=list)
+    callbacks: List["CallbackVar"] = field(default_factory=list)
+    reducers:  List["ReducerVar"]  = field(default_factory=list)
 
 @dataclass
 class StyleBlock:
@@ -143,10 +215,11 @@ class PipelineNode:
 # ── Parser ────────────────────────────────────────────────────────────────────
 
 class ParseError(Exception):
-    def __init__(self, message: str, line: int = 1, col: int = 1):
+    def __init__(self, message: str, line: int = 1, col: int = 1, suggestion: str = ""):
         super().__init__(message)
         self.line = line
         self.col = col
+        self.suggestion = suggestion
 
 
 class Parser:
@@ -154,6 +227,7 @@ class Parser:
         self.tokens = [t for t in tokens
                        if t.type not in (TT.NEWLINE, TT.COMMENT)]
         self.pos = 0
+        self._last_block_keyword: Optional[str] = None  # track context for suggestions
 
     def _cur(self) -> Token:
         return self.tokens[self.pos] if self.pos < len(self.tokens) else Token(TT.EOF, "", 0, 0)
@@ -161,15 +235,81 @@ class Parser:
     def _adv(self) -> Token:
         t = self._cur(); self.pos += 1; return t
 
+    # ── friendly token names ─────────────────────────────────────────────────
+    _FRIENDLY_NAMES = {
+        TT.LBRACE: "'{'",
+        TT.RBRACE: "'}'",
+        TT.LPAREN: "'('",
+        TT.RPAREN: "')'",
+        TT.COLON: "':'",
+        TT.COMMA: "','",
+        TT.EQUALS: "'='",
+        TT.IDENTIFIER: "a name",
+        TT.STRING: "a string",
+        TT.NUMBER: "a number",
+        TT.BOOL: "True/False",
+        TT.RAW_PYTHON: "block content",
+        TT.SERVER: "'server'",
+        TT.COMPONENT: "'component'",
+        TT.STYLE: "'style'",
+        TT.MODEL: "'model'",
+        TT.DATABASE: "'database'",
+        TT.DEPENDENCIES: "'dependencies'",
+        TT.SHARED_STATE: "'shared_state'",
+        TT.AGENT: "'agent'",
+        TT.PIPELINE: "'pipeline'",
+        TT.PAGES: "'pages'",
+        TT.REALTIME: "'realtime'",
+        TT.GRAPHQL: "'graphql'",
+        TT.RBAC: "'rbac'",
+        TT.WEBRTC: "'webrtc'",
+        TT.MIDDLEWARE: "'middleware'",
+        TT.EOF: "end of file",
+    }
+
+    # ── contextual suggestions based on what block we're parsing ──────────────
+    _BLOCK_SUGGESTIONS = {
+        "server":      "Server blocks use brace syntax: server { def my_func(): ... }",
+        "component":   "Components use indent syntax: component MyName():  (with colon, not braces)",
+        "style":       "Style blocks use brace syntax: style { primary = \"#2563eb\" }",
+        "pages":       "Pages blocks use brace syntax: pages { Home = \"/\" }",
+        "shared_state": "Shared state uses brace syntax: shared_state { count = 0 }",
+        "database":    "Database blocks use brace syntax: database { provider = \"sqlite\" }",
+        "dependencies": "Dependencies use brace syntax: dependencies { pip = [\"flask\"] }",
+        "realtime":    "Realtime blocks use brace syntax: realtime { provider = \"websockets\" }",
+        "graphql":     "GraphQL blocks use brace syntax: graphql { type User { ... } }",
+        "rbac":        "RBAC blocks use brace syntax: rbac { roles = [...] }",
+        "webrtc":      "WebRTC blocks use brace syntax: webrtc { signaling = \"websockets\" }",
+        "middleware":  "Middleware blocks use brace syntax: middleware { def guard(req): ... }",
+    }
+
     def _expect(self, *types) -> Token:
         t = self._cur()
         if t.type not in types:
-            expected_names = ", ".join(tt.name for tt in types)
-            raise ParseError(
-                f"Expected {expected_names}, got {t.type.name} {t.value!r}",
-                line=t.line,
-                col=t.col
+            expected_friendly = " or ".join(
+                self._FRIENDLY_NAMES.get(tt, tt.name) for tt in types
             )
+            got_friendly = self._FRIENDLY_NAMES.get(t.type, t.value)
+            msg = f"Expected {expected_friendly}, but got {got_friendly} ({t.value!r})"
+
+            # Build contextual suggestion
+            suggestion = ""
+            if self._last_block_keyword:
+                suggestion = self._BLOCK_SUGGESTIONS.get(self._last_block_keyword, "")
+
+            # Specific common-mistake hints
+            if t.type == TT.IDENTIFIER and t.value == "component" and TT.LBRACE in types:
+                suggestion = "Components use indent syntax with colon: 'component Name():' NOT brace syntax 'component Name { }'"
+            elif TT.LBRACE in types and t.type == TT.COLON:
+                suggestion = f"Did you mean to use brace syntax? Try: {self._last_block_keyword or 'block'} {{ ... }}"
+            elif TT.COLON in types and t.type == TT.LBRACE:
+                suggestion = "Components use colon syntax, not braces: 'component Name():'"
+            elif TT.RBRACE in types and t.type == TT.EOF:
+                suggestion = "Unexpected end of file. Did you forget a closing '}' ?"
+            elif TT.LBRACE in types and t.type == TT.EOF:
+                suggestion = f"Unexpected end of file. Did you forget the opening '{{' after '{self._last_block_keyword or 'keyword'}'?"
+
+            raise ParseError(msg, line=t.line, col=t.col, suggestion=suggestion)
         return self._adv()
 
     def _match(self, *types) -> bool:
@@ -181,35 +321,65 @@ class Parser:
         while not self._match(TT.EOF):
             t = self._cur()
             if t.type == TT.SERVER:
+                self._last_block_keyword = "server"
                 prog.server = self._parse_server()
             elif t.type == TT.COMPONENT:
+                self._last_block_keyword = "component"
                 prog.components.append(self._parse_component())
             elif t.type == TT.STYLE:
+                self._last_block_keyword = "style"
                 prog.style = self._parse_style()
             elif t.type == TT.MODEL:
+                self._last_block_keyword = "model"
                 prog.models.append(self._parse_model())
             elif t.type == TT.DATABASE:
+                self._last_block_keyword = "database"
                 prog.database = self._parse_database()
             elif t.type == TT.DEPENDENCIES:
+                self._last_block_keyword = "dependencies"
                 prog.dependencies = self._parse_dependencies()
             elif t.type == TT.SHARED_STATE:
+                self._last_block_keyword = "shared_state"
                 prog.shared_state = self._parse_shared_state()
             elif t.type == TT.AGENT:
+                self._last_block_keyword = "agent"
                 prog.agents.append(self._parse_agent())
             elif t.type == TT.PIPELINE:
+                self._last_block_keyword = "pipeline"
                 prog.pipelines.append(self._parse_pipeline())
             elif t.type == TT.PAGES:
+                self._last_block_keyword = "pages"
                 prog.pages = self._parse_pages()
             elif t.type == TT.REALTIME:
+                self._last_block_keyword = "realtime"
                 prog.realtime = self._parse_realtime()
             elif t.type == TT.GRAPHQL:
+                self._last_block_keyword = "graphql"
                 prog.graphql = self._parse_graphql()
             elif t.type == TT.RBAC:
+                self._last_block_keyword = "rbac"
                 prog.rbac = self._parse_rbac()
             elif t.type == TT.WEBRTC:
+                self._last_block_keyword = "webrtc"
                 prog.webrtc = self._parse_webrtc()
+            elif t.type == TT.MIDDLEWARE:
+                self._last_block_keyword = "middleware"
+                prog.middleware = self._parse_middleware()
+            elif t.type == TT.LOCALE:
+                self._last_block_keyword = "locale"
+                prog.locale = self._parse_locale()
             else:
-                self._adv()
+                # Unexpected token at top-level
+                t = self._cur()
+                msg = f"Token tingkat atas tidak valid: got {self._FRIENDLY_NAMES.get(t.type, t.value)} ({t.value!r})"
+                suggestion = ""
+                # Check for common casing mistakes
+                val_lower = t.value.lower() if t.value else ""
+                if val_lower in ("server", "component", "style", "database", "dependencies", "shared_state", "realtime", "graphql", "rbac", "webrtc", "middleware", "locale", "pages"):
+                    suggestion = f"Di PyReact, keyword blok harus menggunakan huruf kecil (lowercase). Gunakan '{val_lower}' bukan '{t.value}'."
+                else:
+                    suggestion = f"Semua kode PyReact harus berada di dalam blok yang valid (seperti server {{ }}, component Name():, style {{ }}, dll.). Karakter/token '{t.value}' di luar blok tidak diperbolehkan."
+                raise ParseError(msg, line=t.line, col=t.col, suggestion=suggestion)
         return prog
 
 
@@ -217,18 +387,28 @@ class Parser:
     def _parse_server(self) -> ServerBlock:
         self._expect(TT.SERVER)
         self._expect(TT.LBRACE)
+        raw_tok = self._cur()
         raw = self._expect(TT.RAW_PYTHON).value if self._match(TT.RAW_PYTHON) else ""
         self._expect(TT.RBRACE)
         sb = ServerBlock(raw=raw)
-        self._analyse_server(sb)
+        self._analyse_server(sb, start_line=raw_tok.line)
         return sb
 
-    def _analyse_server(self, sb: ServerBlock):
+    def _analyse_server(self, sb: ServerBlock, start_line: int = 1):
         import ast
         import textwrap
         try:
             tree = ast.parse(textwrap.dedent(sb.raw))
-        except Exception:
+        except Exception as e:
+            if isinstance(e, SyntaxError):
+                abs_line = start_line + (e.lineno or 1) - 1
+                abs_col = e.offset or 1
+                raise ParseError(
+                    message=f"Kesalahan sintaksis Python di block server: {e.msg}",
+                    line=abs_line,
+                    col=abs_col,
+                    suggestion="Pastikan kode Python di dalam block server memiliki sintaksis yang valid (misalnya kolon, tanda kurung, indentasi)."
+                )
             self._analyse_server_fallback(sb)
             return
 
@@ -348,9 +528,46 @@ class Parser:
         return node
 
     def _analyse_component(self, node: ComponentNode, raw: str):
+        # use_ref: ref = use_ref(initial)
+        for m in re.finditer(r"(\w+)\s*=\s*use_ref\s*\(([^)]*)\)", raw):
+            node.refs.append(RefVar(m.group(1), m.group(2).strip() or "null"))
+
+        # use_memo: name = use_memo(def(): expr, [deps])
+        for m in re.finditer(
+            r"(\w+)\s*=\s*use_memo\s*\(\s*def\s*\(\s*\)\s*:\s*([^,]+?)\s*,\s*(\[[^\]]*\])\s*\)",
+            raw, re.DOTALL
+        ):
+            node.memos.append(MemoVar(m.group(1), m.group(2).strip(), m.group(3).strip()))
+
+        # use_callback: name = use_callback(def(): ..., [deps])
+        for m in re.finditer(
+            r"(\w+)\s*=\s*use_callback\s*\(\s*def\s*\(\s*\)\s*:([^,]+?)\s*,\s*(\[[^\]]*\])\s*\)",
+            raw, re.DOTALL
+        ):
+            node.callbacks.append(CallbackVar(m.group(1), m.group(2).strip(), m.group(3).strip()))
+
+        # use_reducer: state, dispatch = use_reducer(reducer_fn, initial)
+        for m in re.finditer(
+            r"(\w+)\s*,\s*(\w+)\s*=\s*use_reducer\s*\(\s*([\w]+)\s*,\s*([^)]+)\)",
+            raw
+        ):
+            node.reducers.append(ReducerVar(
+                state=m.group(1), dispatch=m.group(2),
+                reducer=m.group(3), initial=m.group(4).strip()
+            ))
+
         # state vars
         for m in re.finditer(r"(\w+)\s*,\s*(\w+)\s*=\s*use_state\s*\(([^)]*)\)", raw):
             node.states.append(StateVar(m.group(1), m.group(2), m.group(3).strip() or "null"))
+
+        # use_effect detection: use_effect(def(): ..., [deps]) or use_effect(def(): ...)
+        for m in re.finditer(
+            r"use_effect\s*\(\s*def\s*\(\s*\)\s*:([^,]+?)(?:,\s*(\[[^\]]*\]))?\s*\)",
+            raw, re.DOTALL
+        ):
+            body = m.group(1).strip()
+            deps = m.group(2).strip() if m.group(2) else "[]"
+            node.effects.append(EffectDef(body=body, deps=deps))
 
         # handlers: parse line-by-line to get individual def blocks
         lines = raw.splitlines()
@@ -551,18 +768,28 @@ class Parser:
     def _parse_realtime(self) -> RealtimeBlock:
         self._expect(TT.REALTIME)
         self._expect(TT.LBRACE)
+        raw_tok = self._cur()
         raw = self._expect(TT.RAW_PYTHON).value if self._match(TT.RAW_PYTHON) else ""
         self._expect(TT.RBRACE)
         rb = RealtimeBlock(raw=raw)
-        self._analyse_realtime(rb)
+        self._analyse_realtime(rb, start_line=raw_tok.line)
         return rb
 
-    def _analyse_realtime(self, rb: RealtimeBlock):
+    def _analyse_realtime(self, rb: RealtimeBlock, start_line: int = 1):
         import ast
         import textwrap
         try:
             tree = ast.parse(textwrap.dedent(rb.raw))
-        except Exception:
+        except Exception as e:
+            if isinstance(e, SyntaxError):
+                abs_line = start_line + (e.lineno or 1) - 1
+                abs_col = e.offset or 1
+                raise ParseError(
+                    message=f"Kesalahan sintaksis Python di block realtime: {e.msg}",
+                    line=abs_line,
+                    col=abs_col,
+                    suggestion="Pastikan kode Python di dalam block realtime memiliki sintaksis yang valid."
+                )
             # basic regex fallback
             lines = rb.raw.splitlines()
             for line in lines:
@@ -696,3 +923,89 @@ class Parser:
 
         return wb
 
+    # ── middleware ──────────────────────────────────────────────────────────
+    def _parse_middleware(self) -> "MiddlewareBlock":
+        self._expect(TT.MIDDLEWARE)
+        self._expect(TT.LBRACE)
+        raw_tok = self._cur()
+        raw = self._expect(TT.RAW_PYTHON).value if self._match(TT.RAW_PYTHON) else ""
+        self._expect(TT.RBRACE)
+        from .parser import MiddlewareBlock
+        mb = MiddlewareBlock(raw=raw)
+
+        # Parse middleware functions using same approach as server
+        import ast as _ast
+        import textwrap
+        try:
+            tree = _ast.parse(textwrap.dedent(raw))
+            for node in tree.body:
+                if isinstance(node, _ast.FunctionDef):
+                    params = [arg.arg for arg in node.args.args]
+                    body = "\n".join(_ast.unparse(stmt) for stmt in node.body)
+                    mb.functions.append(FuncDef(name=node.name, params=params, body=body))
+        except Exception as e:
+            if isinstance(e, SyntaxError):
+                abs_line = raw_tok.line + (e.lineno or 1) - 1
+                abs_col = e.offset or 1
+                raise ParseError(
+                    message=f"Kesalahan sintaksis Python di block middleware: {e.msg}",
+                    line=abs_line,
+                    col=abs_col,
+                    suggestion="Pastikan kode Python di dalam block middleware memiliki sintaksis yang valid."
+                )
+            # Fallback: regex
+            func_re = re.compile(r"^\s*def\s+(\w+)\s*\(([^)]*)\)\s*:", re.MULTILINE)
+            for m in func_re.finditer(raw):
+                mb.functions.append(FuncDef(name=m.group(1), params=[m.group(2).strip()], body=""))
+
+        return mb
+
+    # ── locale (i18n) ─────────────────────────────────────────────────────
+    def _parse_locale(self) -> "LocaleBlock":
+        """Parse locale { } block for i18n support."""
+        self._expect(TT.LOCALE)
+        self._expect(TT.LBRACE)
+        raw = self._expect(TT.RAW_PYTHON).value if self._match(TT.RAW_PYTHON) else ""
+        self._expect(TT.RBRACE)
+        
+        lb = LocaleBlock(raw=raw)
+        
+        # Parse default language
+        default_m = re.search(r'default\s*=\s*["\']([^"\']+)["\']', raw)
+        if default_m:
+            lb.default = default_m.group(1)
+        
+        # Parse supported languages list
+        supported_m = re.search(r'supported\s*=\s*\[(.*?)\]', raw, re.DOTALL)
+        if supported_m:
+            lb.supported = [
+                lang.strip().strip("'\"")
+                for lang in supported_m.group(1).split(",")
+                if lang.strip()
+            ]
+        
+        # Parse translation keys
+        # Format: key = { lang = "value", lang2 = "value2" }
+        trans_re = re.compile(
+            r'(\w+)\s*=\s*\{([^}]+)\}',
+            re.MULTILINE
+        )
+        for m in trans_re.finditer(raw):
+            key = m.group(1)
+            if key in ("default", "supported"):
+                continue  # Skip config keys
+            
+            translations_block = m.group(2)
+            lang_values = {}
+            
+            # Parse lang = "value" pairs
+            lang_re = re.compile(r'(\w+)\s*=\s*["\']([^"\']*)["\']')
+            for lang_m in lang_re.finditer(translations_block):
+                lang_code = lang_m.group(1)
+                value = lang_m.group(2)
+                lang_values[lang_code] = value
+            
+            if lang_values:
+                lb.translations[key] = lang_values
+        
+        return lb

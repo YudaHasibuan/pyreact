@@ -1,6 +1,6 @@
-# Product Requirement Document (PRD): PyReact v1.2
+# Product Requirement Document (PRD): PyReact v1.3
 
-**Status:** Updated | **Version:** 1.2.1 | **Author:** Yuda Hasibuan | **Date:** 5 Juni 2026
+**Status:** Updated | **Version:** 1.3.0 | **Author:** Yuda Hasibuan | **Date:** 15 Juni 2026
 
 ---
 
@@ -99,6 +99,8 @@ Satu file `.pyreact` terbagi menjadi beberapa blok deklaratif:
 - **R-3.4.2 (Cross-Platform):** Perintah `serve` dan `dev` berjalan di Windows (Waitress) dan Unix (Gunicorn). **[SELESAI]**
 - **R-3.4.3 (Help Flags):** CLI menerima `-h`, `--help`, `-help`, dan `help` sebagai argumen untuk menampilkan banner dan daftar perintah lengkap. **[SELESAI]**
 - **R-3.4.4 (Windows Unicode Safety):** `sys.stdout` dan `sys.stderr` dikonfigurasi dengan `errors="replace"` di awal eksekusi CLI agar banner berisi karakter Unicode (⚡, box-drawing) tidak menyebabkan `UnicodeEncodeError` pada terminal Windows cp1252. **[SELESAI]**
+- **R-3.4.5 (Architecture Explainer):** Perintah `pyreact explain [file]` melakukan parsing terhadap dokumen `.pyreact` dan menyajikan representasi arsitektur terstruktur (server endpoints, components, database models, pages routes, shared state, style tokens) di terminal. **[SELESAI]**
+- **R-3.4.6 (Extended Code Scaffolding):** Perintah `pyreact generate` mendukung pembuatan boilerplate lengkap untuk `component [--crud]`, `page [--url]`, `api`, `model`, dan `auth` (termasuk JWT endpoint & Login/Dashboard page views). **[SELESAI]**
 
 ### 3.5 Self-Healing Compiler *(Fase 15)*
 
@@ -393,7 +395,14 @@ pyreact serve
 pyreact ai "<prompt>"
 
 # Scaffold
-pyreact generate component <Name>
+pyreact generate component <Name> [--crud]
+pyreact generate page <Name> [--url /path]
+pyreact generate api <func_name> [params...]
+pyreact generate model <Name> [fields...]
+pyreact generate auth
+
+# Explain
+pyreact explain [file]
 
 # Package Registry
 pyreact install <package>
@@ -474,6 +483,11 @@ Auth:        UI.useAuth()
 ---
 
 ## 9. Riwayat Pengembangan / Log Histori
+
+**15 Juni 2026 — v1.3.0: Developer Tooling & CLI UX (Sprint 2):**
+- Implementasi perintah `pyreact explain [file]` untuk menganalisis dokumen `.pyreact` dan menampilkan summary arsitektur proyek (server endpoints, components, database models, pages routes, shared state, style tokens) secara rapi di terminal.
+- Ekstensi perintah `pyreact generate` untuk mendukung scaffolding tingkat lanjut: `component [--crud]`, `page [--url]`, `api`, `model`, dan `auth` lengkap dengan boilerplate state/view/handler dan auto-injection ke entry point `app.pyreact`.
+- Penambahan fungsi `find_block_closing_brace` untuk mendeteksi dengan aman matching closing brace pada scope parser, mengabaikan brace di dalam komentar, string literal, maupun nested data structure (seperti dictionary).
 
 **5 Juni 2026 — v1.2.2: Real-time, GraphQL, and RBAC Integration (Fase 24-26):**
 - Implementasi sinkronisasi state kolaboratif real-time berbasis CRDT-lite (LWW-Register & Vector Clock) di frontend (`crdt.js` / `useRealtimeChannel`) dan broadcast helper di backend (`crdt_broadcast.py`).
@@ -608,7 +622,7 @@ Auth:        UI.useAuth()
 
 ---
 
-*PyReact PRD v1.3.2 — Last updated: 5 Juni 2026*
+*PyReact PRD v1.3.0 — Last updated: 15 Juni 2026*
 *© Yuda Hasibuan — MIT License*
 
 

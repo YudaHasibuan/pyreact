@@ -7,6 +7,7 @@ try:
 except (AttributeError, TypeError):
     pass
 import os
+import re
 import shutil
 import subprocess
 import threading
@@ -41,7 +42,7 @@ server {
     import json
 
     def hello(name):
-        return {"message": f"Hello, {name}! From Flask via PyBridge™"}
+        return {"message": f"Hello, {name}! From Flask via PyBridge\u2122"}
 
     def get_data():
         sample = [
@@ -59,6 +60,12 @@ component Home():
     name, setName = use_state("")
     data, setData = use_state([])
     loading, setLoading = use_state(False)
+    pageViews, setPageViews = use_state(0)
+
+    use_effect(def():
+        setPageViews(pageViews + 1)
+        document.title = "PyReact App - Welcome"
+    , [])
 
     def fetchHello():
         setLoading(True)
@@ -74,12 +81,12 @@ component Home():
         <UI.Page>
             <UI.Navbar title="PyReact App" />
             <div className="pt-20 max-w-3xl mx-auto">
-                <UI.Heading>Welcome to PyReact *</UI.Heading>
+                <UI.Heading>Welcome to PyReact \u26a1</UI.Heading>
                 <UI.Text color="gray-400" className="mt-2 mb-8">
                     Build fullstack apps with one language. One file.
                 </UI.Text>
 
-                <UI.Card title="PyBridge™ RPC Demo">
+                <UI.Card title="PyBridge\u2122 RPC Demo">
                     <UI.Input
                         label="Your name"
                         value={name}
@@ -566,6 +573,60 @@ def preprocess_ai_directives(source: str) -> str:
     return new_source
 
 
+def _merge_component_files(entry: str, ast_tree) -> object:
+    """Scan components/ folder for .pyreact files and merge their components into the main AST."""
+    from pyreact.compiler.lexer import Lexer, LexerError
+    from pyreact.compiler.parser import Parser, ParseError
+
+    entry_dir = Path(entry).parent
+    components_dir = entry_dir / "components"
+    if not components_dir.is_dir():
+        return ast_tree
+
+    component_files = sorted(components_dir.glob("*.pyreact"))
+    if not component_files:
+        return ast_tree
+
+    print(f"  [Import] Found {len(component_files)} component file(s) in components/")
+    existing_names = {c.name for c in ast_tree.components}
+
+    for comp_file in component_files:
+        try:
+            comp_source = comp_file.read_text(encoding="utf-8")
+            comp_source = preprocess_ai_directives(comp_source)
+            comp_tokens = Lexer(comp_source).tokenize()
+            comp_ast = Parser(comp_tokens).parse()
+
+            for comp in comp_ast.components:
+                if comp.name not in existing_names:
+                    ast_tree.components.append(comp)
+                    existing_names.add(comp.name)
+                    print(f"    -> Imported component: {comp.name} (from {comp_file.name})")
+                else:
+                    print(f"    -> Skipped duplicate: {comp.name} (already defined in main file)")
+
+            # Merge server functions from component files
+            if comp_ast.server and comp_ast.server.functions:
+                if not ast_tree.server:
+                    from pyreact.compiler.parser import ServerBlock
+                    ast_tree.server = ServerBlock(raw=comp_ast.server.raw)
+                for func in comp_ast.server.functions:
+                    func_names = {f.name for f in ast_tree.server.functions}
+                    if func.name not in func_names:
+                        ast_tree.server.functions.append(func)
+                        print(f"    -> Imported server function: {func.name} (from {comp_file.name})")
+        except (LexerError, ParseError) as e:
+            err_line = getattr(e, "line", 0)
+            suggestion = getattr(e, "suggestion", "")
+            print(f"    -> [WARN] Failed to parse {comp_file.name}: {e}")
+            if suggestion:
+                print(f"       Hint: {suggestion}")
+        except Exception as e:
+            print(f"    -> [WARN] Error reading {comp_file.name}: {e}")
+
+    return ast_tree
+
+
 def _compile(entry: str, out_dir: str = "dist", target: str = "flask",
              run_ssg: bool = False, run_audit: bool = False,
              run_healing: bool = False, heal_model: str = None,
@@ -595,6 +656,9 @@ def _compile(entry: str, out_dir: str = "dist", target: str = "flask",
 
     print(f"  [1/3] Lexing {entry}...")
     try:
+        from pyreact.compiler.errors import validate_source_integrity
+        validate_source_integrity(source)
+        
         tokens = Lexer(source).tokenize()
         print(f"  [2/3] Parsing AST...")
         ast_tree = Parser(tokens).parse()
@@ -620,36 +684,981 @@ def _compile(entry: str, out_dir: str = "dist", target: str = "flask",
                 print(f"  [X]  Healed code masih gagal: {e2}")
                 sys.exit(1)
         else:
-            err_line = getattr(pe, "line", 0)
-            err_col  = getattr(pe, "col", 0)
-            lines    = source.splitlines()
-            print(f"\n  X  Compilation Error in {entry}:\n")
-            if err_line and err_line - 1 < len(lines):
-                if err_line - 2 >= 0:
-                    print(f"  {err_line - 1} | {lines[err_line - 2]}")
-                print(f"  {err_line} | {lines[err_line - 1]}")
-                if err_col:
-                    indent = " " * (len(str(err_line)) + 3 + err_col - 1)
-                    print(f"{indent}^")
-                if err_line < len(lines):
-                    print(f"  {err_line + 1} | {lines[err_line]}")
-            print(f"\n  Error: {pe}")
-            print(f"  TIP:  Jalankan dengan --heal untuk perbaikan otomatis via AI\n")
+            from pyreact.compiler.errors import format_compilation_error
+            err_line = getattr(pe, "line", 1)
+            err_col  = getattr(pe, "col", 1)
+            suggestion = getattr(pe, "suggestion", "")
+            err_msg = str(pe)
+            formatted = format_compilation_error(err_msg, err_line, err_col, source, suggestion)
+            print(formatted)
             sys.exit(1)
 
-    print(f"  [3/3] Generating code -> {out_dir}/  (Target: {target.upper()})")
+    print(f"  [3/4] Generating code -> {out_dir}/  (Target: {target.upper()})")
+    ast_tree = _merge_component_files(entry, ast_tree)
+    
+    # Run type checker
+    print(f"  [2/4] Running type checker...")
+    from pyreact.compiler.typechecker import run_type_check
+    type_warnings = run_type_check(ast_tree)
+    if type_warnings:
+        errors = [w for w in type_warnings if w.severity == "error"]
+        warnings = [w for w in type_warnings if w.severity == "warning"]
+        if errors:
+            print(f"    ! {len(errors)} type error(s) found")
+            for w in errors[:5]:  # Show first 5 errors
+                print(f"      - {w}")
+        if warnings:
+            print(f"    ~ {len(warnings)} type warning(s)")
+            for w in warnings[:5]:  # Show first 5 warnings
+                print(f"      - {w}")
+    else:
+        print(f"    OK  No type issues found")
+    
     CodeGenerator(ast_tree, out_dir, target).generate()
 
 
+# ── AI Context File Generators ────────────────────────────────────────────────
+
+def _generate_agents_md() -> str:
+    """Generate AGENTS.md content for AI assistants to understand PyReact."""
+    return '''# AGENTS.md — PyReact Language Reference for AI Assistants
+
+> This file teaches AI coding assistants (Cursor, Copilot, Claude, etc.) how to write correct PyReact code.
+> ALWAYS follow these rules when generating or editing `.pyreact` files.
+
+## What is PyReact?
+
+PyReact is a Python-powered fullstack language. A single `.pyreact` file compiles into:
+- **Backend**: Python Flask API server (auto-generated routes)
+- **Frontend**: React 18 + Vite + Tailwind CSS (auto-generated components)
+- **Bridge**: PyBridge RPC connects frontend `server.funcName()` calls to backend Flask endpoints
+
+## Critical Rules
+
+1. **NEVER write raw React JSX files** — always write `.pyreact` syntax
+2. **NEVER write raw Flask/Python server files** — use `server { }` blocks
+3. **NEVER write raw HTML/CSS files** — use `component` + `style { }` blocks
+4. **NEVER use `import React` or `from react`** inside `.pyreact` files — it's auto-generated
+5. **NEVER use `fetch()` or `axios`** — use `server.funcName()` for all API calls
+6. **NEVER use `useState` or `useEffect`** (camelCase) — use `use_state` and `use_effect` (snake_case)
+
+## Syntax Reference
+
+### File Structure
+
+A `.pyreact` file contains one or more of these top-level blocks:
+
+```
+server { }          # Backend Python functions (REQUIRED — brace syntax)
+component Name():   # UI component (REQUIRED — indent syntax)
+style { }           # Design tokens (optional — brace syntax)
+pages { }           # Routing (optional — brace syntax)
+shared_state { }    # Global reactive state (optional — brace syntax)
+database { }        # ORM config (optional — brace syntax)
+dependencies { }    # pip/npm packages (optional — brace syntax)
+realtime { }        # WebSocket config (optional — brace syntax)
+graphql { }         # GraphQL schema (optional — brace syntax)
+rbac { }            # Role-based access control (optional — brace syntax)
+webrtc { }          # P2P audio/video (optional — brace syntax)
+middleware { }       # Request interceptors (optional — brace syntax)
+```
+
+### Syntax Convention
+
+- **Brace syntax** `{ }` — used for config/data blocks: `server`, `style`, `pages`, `shared_state`, `database`, `dependencies`, `realtime`, `graphql`, `rbac`, `webrtc`, `middleware`
+- **Indent syntax** `():` — used for `component` blocks (more Pythonic)
+
+## Block Reference with Examples
+
+### 1. `server { }` — Backend API Functions
+
+Defines Python functions that become Flask API endpoints. Each `def` becomes a `POST /api/function_name` route.
+
+```python
+server {
+    def get_users():
+        users = [{"id": 1, "name": "Alice", "role": "admin"}]
+        return {"users": users}
+
+    def create_user(name: str, email: str):
+        return {"id": 2, "name": name, "email": email}
+}
+```
+
+### 2. `component Name():` — UI Components
+
+```python
+component UserProfile():
+    name, setName = use_state("")
+    loading, setLoading = use_state(False)
+    user, setUser = use_state(None)
+
+    def loadUser():
+        setLoading(True)
+        data = server.get_user(name)
+        setUser(data)
+        setLoading(False)
+
+    return (
+        <UI.Page>
+            <UI.Navbar title="User Profile" />
+            <div className="pt-24 max-w-xl mx-auto px-4">
+                <UI.Card title="User Info">
+                    <UI.Input label="Name" value={name} onChange={setName} />
+                    <UI.Button onClick={loadUser} loading={loading}>Load</UI.Button>
+                </UI.Card>
+            </div>
+        </UI.Page>
+    )
+```
+
+**Rules:**
+- Component names MUST start with uppercase (PascalCase)
+- State: `value, setValue = use_state(initial)` compiles to React useState
+- Handlers: `def handlerName():` compiles to async arrow function
+- Always call backend via `server.functionName(args)` — NEVER fetch()
+- Use `<UI.ComponentName>` for built-in components
+- Use `className=` (not `class=`) for CSS classes (Tailwind CSS)
+
+### 3. `style { }` — Design Tokens
+
+```python
+style {
+    primary    = "#2563eb"
+    secondary  = "#7c3aed"
+    background = "#030712"
+    radius     = "16px"
+    font       = "Inter"
+}
+```
+
+### 4. `pages { }` — File-System Routing
+
+```python
+pages {
+    Home      = "/"
+    About     = "/about"
+    Dashboard = "/dashboard" [guard]
+    Login     = "/login"
+}
+```
+
+### 5. `shared_state { }` — Global Reactive State
+
+```python
+shared_state {
+    current_user = None
+    theme = "dark"
+}
+```
+
+Access in components via `shared.variableName`.
+
+### 6. `database { }` — ORM Configuration
+
+```python
+database {
+    provider = "sqlite"
+    url = "db.sqlite"
+}
+```
+
+### 7. `dependencies { }` — Package Declarations
+
+```python
+dependencies {
+    pip = ["flask-cors", "pillow"]
+    npm = ["lodash", "date-fns"]
+}
+```
+
+### 8. `middleware { }` — Request Interceptors
+
+```python
+middleware {
+    def auth_guard(request):
+        token = request.headers.get("Authorization")
+        if not token:
+            return {"status": 401, "message": "Unauthorized"}
+}
+```
+
+## UI Components Reference
+
+All built-in components are accessed via `<UI.ComponentName>`:
+
+**Layout:** Page, Navbar, Sidebar, Dashboard
+**Data Display:** Card, MetricCard, Table, DataGrid, Badge, Text, Heading, Divider
+**Forms:** Button (variant: primary|secondary|danger|ghost), Input, TextArea, Select, Upload
+**Feedback:** Alert (type: info|success|error|warning), Toast, Spinner, Modal
+**Navigation:** Tabs, Dropdown, Accordion
+**Advanced:** Chart (type: bar|line), Calendar, Chatbot, NetworkStatus, useAuth
+
+## Hooks Reference
+
+| PyReact Hook | Description |
+|-------------|-------------|
+| `value, setValue = use_state(initial)` | Local component state |
+| `use_effect(def(): ..., [deps])` | Side effects |
+| `doc, update, live = useRealtimeChannel(topic, id)` | Real-time sync |
+| `const { user, login, logout, isAuthenticated } = UI.useAuth()` | Authentication |
+
+## CLI Commands
+
+```bash
+pyreact new <name>                    # Create new project
+pyreact dev                           # Start dev servers
+pyreact build                         # Production build
+pyreact compile [file]                # Compile without build
+pyreact doctor                        # Diagnose environment
+pyreact generate component <Name>     # Scaffold a component
+```
+
+## File Header Convention
+
+Every PyReact file can optional start with a metadata header structure to declare its purpose and components:
+```python
+# @pyreact app
+# @name: My App Name
+# @description: Short description of this app
+# @version: 1.0.0
+# @blocks: server, component, style
+```
+
+## Developer Quick Reference (Flask & React Mapping)
+
+### Flask -> PyReact Mental Model
+
+| Flask / Python Backend | PyReact equivalent |
+|---|---|
+| `app.py` | `app.pyreact` (unified entry file) |
+| `@app.route('/api/x', methods=['POST'])` | `def x():` defined inside `server { }` block |
+| `request.json['name']` / `request.form['name']` | Function parameter: `def create(name: str):` (type hinted) |
+| `jsonify({"status": "ok"})` | `return {"status": "ok"}` |
+| `SQLAlchemy model` | `class DbModel(db.Model):` inside `server { }` block |
+| `Flask Blueprint` | Component files in `components/` |
+| `@login_required` | `[guard]` flag on page configuration in `pages { }` |
+| `CORS(app)` | Auto-configured by PyReact compiler |
+
+### React -> PyReact Mental Model
+
+| React / JS Frontend | PyReact equivalent |
+|---|---|
+| `useState(initial)` | `val, setVal = use_state(initial)` |
+| `useEffect(() => {}, [])` | `use_effect(def(): ..., [])` |
+| `fetch('/api/x')` / `axios` | `server.x()` (PyBridge RPC) |
+| `export default function App()` | `component App():` (indent syntax) |
+| `import { useState }` | (auto-imported, do not write imports) |
+| `<div onClick={() => fn()}>` | `<div onClick={fn}>` (pythonic reference) |
+| `BrowserRouter` / `Routes` | `pages { }` block configuration |
+| Zustand / Redux / Context | `shared_state { }` global reactive state |
+| `tailwind.config.js` | `style { }` block design tokens |
+
+## Decision Tree for AI Coding
+
+To build a feature, follow this tree:
+1. **Need database operations?** -> Define model inside `server { }` block. Ensure `database { }` config is present.
+2. **Need API / backend functions?** -> Define a python function inside the `server { }` block.
+3. **Need local state?** -> Use `val, setVal = use_state(initial)`.
+4. **Need global state shared across pages?** -> Define in `shared_state { }` block and access via `shared.varName`.
+5. **Need page routing?** -> Define pages in the `pages { }` block (or create `.pyreact` files in a `pages/` directory).
+6. **Need real-time updates?** -> Declare channels in `realtime { }` and use `useRealtimeChannel(topic, id)`.
+
+## Things to Avoid
+
+| Don\'t | Do Instead |
+|-------|-----------|
+| `const [x, setX] = useState(0)` | `x, setX = use_state(0)` |
+| `useEffect(() => {}, [])` | `use_effect(def(): ..., [])` |
+| `fetch("/api/endpoint")` | `server.endpoint(args)` |
+| `import React from "react"` | (auto-imported) |
+| `export default function X()` | `component X():` |
+| JavaScript `===` | Python `==` |
+| JavaScript `!==` | Python `!=` |
+| `null` (in handlers/state) | `None` |
+| `true` / `false` | `True` / `False` |
+'''
+
+
+def _generate_llms_txt() -> str:
+    """Generate LLMS.txt — machine-readable PyReact language context for AI assistants."""
+    return '''# LLMS.txt — PyReact Language Context
+# This file tells AI assistants (Claude, ChatGPT, Gemini, Copilot, Cursor) the rules
+# for this project. Read this BEFORE generating any code.
+
+Language: PyReact v2.0
+Extension: .pyreact
+Paradigm: Unified Fullstack (Python syntax → Flask Backend + React Frontend)
+Compiler: pyreact compile / pyreact dev
+
+== CRITICAL DO/DON'T ==
+DO:   val, setVal = use_state(0)
+DONT: const [val, setVal] = useState(0)
+
+DO:   result = server.get_users()
+DONT: const result = await fetch("/api/get_users")
+
+DO:   use_effect(def(): load(), [])
+DONT: useEffect(() => { load(); }, [])
+
+DO:   component MyPage():
+DONT: export default function MyPage() {
+
+DO:   None, True, False
+DONT: null, true, false
+
+DO:   server { def my_func(): ... }
+DONT: @app.route("/api/my_func")
+
+== SYNTAX MAP ==
+useState(x)           → x, setX = use_state(x)
+useEffect(fn,[])      → use_effect(def(): fn(), [])
+useRef(null)          → ref = use_ref(None)
+useMemo(fn,[])        → val = use_memo(fn, [])
+useReducer(r,s)       → state, dispatch = use_reducer(r, s)
+fetch("/api/x",...)   → server.x(args)
+null                  → None
+true / false          → True / False
+export default fn     → component Name():
+import React from ... → (auto-generated, do not write)
+className="..."       → className="..." (same)
+
+== BLOCK SYNTAX ==
+server { }            Backend Python functions (brace)
+component Name():     UI Component (indent)
+style { }             Design tokens CSS vars (brace)
+pages { }             Routing (brace)
+shared_state { }      Global reactive state (brace)
+database { }          ORM config SQLite/Postgres (brace)
+dependencies { }      pip/npm packages (brace)
+realtime { }          WebSocket channels (brace)
+middleware { }        Request interceptors (brace)
+
+== COMPONENT EXAMPLE ==
+component TaskList():
+    tasks, setTasks = use_state([])
+    loading, setLoading = use_state(False)
+
+    def load():
+        setLoading(True)
+        res = server.get_tasks()
+        setTasks(res["tasks"])
+        setLoading(False)
+
+    use_effect(def(): load(), [])
+
+    return (
+        <UI.Page>
+            <UI.Navbar title="Tasks" />
+            <div className="pt-24 max-w-2xl mx-auto px-4">
+                <UI.Spinner visible={loading} />
+                {tasks.map(t => <UI.Text key={t.id}>{t.title}</UI.Text>)}
+            </div>
+        </UI.Page>
+    )
+
+== SERVER EXAMPLE ==
+server {
+    def get_tasks():
+        return {"tasks": [{"id": 1, "title": "Buy milk"}]}
+
+    def create_task(title: str):
+        return {"status": "created", "title": title}
+}
+'''
+
+
+def _generate_vscode_snippets() -> str:
+    """Generate .pyreact.code-snippets for VS Code / Cursor IDE."""
+    import json as _json
+    snippets = {
+        "PyReact Component": {
+            "prefix": "comp",
+            "body": [
+                "component ${1:MyComponent}():",
+                "    ${2:value}, ${3:setValue} = use_state(${4:None})",
+                "",
+                "    def ${5:handleAction}():",
+                "        result = server.${6:my_func}(${2:value})",
+                "        ${3:setValue}(result)",
+                "",
+                "    return (",
+                "        <UI.Page>",
+                "            <UI.Navbar title=\"${7:My App}\" />",
+                "            <div className=\"pt-24 max-w-xl mx-auto px-4\">",
+                "                <UI.Card title=\"${8:Card Title}\">",
+                "                    $0",
+                "                </UI.Card>",
+                "            </div>",
+                "        </UI.Page>",
+                "    )"
+            ],
+            "description": "Scaffold a new PyReact component"
+        },
+        "PyReact Server Block": {
+            "prefix": "srv",
+            "body": [
+                "server {",
+                "    def ${1:get_data}():",
+                "        return {\"data\": []}",
+                "",
+                "    def ${2:create_item}(${3:name}: str):",
+                "        return {\"status\": \"ok\", \"name\": ${3:name}}",
+                "}"
+            ],
+            "description": "Scaffold a server block with two example functions"
+        },
+        "PyReact CRUD Full": {
+            "prefix": "crud",
+            "body": [
+                "database {",
+                "    provider = \"sqlite\"",
+                "    url = \"${1:app}.db\"",
+                "}",
+                "",
+                "server {",
+                "    class Db${2:Item}(db.Model):",
+                "        __tablename__ = '${3:items}'",
+                "        id    = db.Column(db.Integer, primary_key=True)",
+                "        title = db.Column(db.String(255))",
+                "",
+                "    def get_${3:items}():",
+                "        rows = Db${2:Item}.query.all()",
+                "        return {\"${3:items}\": [{\"id\": r.id, \"title\": r.title} for r in rows]}",
+                "",
+                "    def create_${4:item}(title: str):",
+                "        row = Db${2:Item}(title=title)",
+                "        db.session.add(row)",
+                "        db.session.commit()",
+                "        return {\"status\": \"created\", \"id\": row.id}",
+                "",
+                "    def delete_${4:item}(id: int):",
+                "        row = Db${2:Item}.query.get(id)",
+                "        if row: db.session.delete(row); db.session.commit()",
+                "        return {\"status\": \"deleted\"}",
+                "}",
+                "",
+                "component ${5:ItemManager}():",
+                "    items, setItems = use_state([])",
+                "    new_title, setNewTitle = use_state(\"\")",
+                "",
+                "    def load():",
+                "        res = server.get_${3:items}()",
+                "        setItems(res[\"${3:items}\"])",
+                "",
+                "    def add():",
+                "        server.create_${4:item}(new_title)",
+                "        setNewTitle(\"\")",
+                "        load()",
+                "",
+                "    use_effect(def(): load(), [])",
+                "",
+                "    return (",
+                "        <UI.Page>",
+                "            <UI.Navbar title=\"${5:ItemManager}\" />",
+                "            <div className=\"pt-24 max-w-xl mx-auto px-4\">",
+                "                <UI.Card title=\"Add ${2:Item}\">",
+                "                    <UI.Input label=\"Title\" value={new_title} onChange={setNewTitle} />",
+                "                    <UI.Button onClick={add}>Add</UI.Button>",
+                "                </UI.Card>",
+                "                <UI.Card title=\"All ${3:items}\" className=\"mt-4\">",
+                "                    {items.map(i => <UI.Text key={i.id}>{i.title}</UI.Text>)}",
+                "                </UI.Card>",
+                "            </div>",
+                "        </UI.Page>",
+                "    )"
+            ],
+            "description": "Scaffold a full CRUD app with database, server, and component"
+        },
+        "PyReact use_state": {
+            "prefix": "ust",
+            "body": ["${1:value}, ${2:setValue} = use_state(${3:None})"],
+            "description": "PyReact state hook (compiles to useState)"
+        },
+        "PyReact use_effect": {
+            "prefix": "uef",
+            "body": ["use_effect(def():", "    $0", ", ${1:[]})"],
+            "description": "PyReact effect hook (compiles to useEffect)"
+        },
+        "PyReact server call": {
+            "prefix": "scall",
+            "body": ["${1:result} = server.${2:func_name}(${3})"],
+            "description": "PyReact server RPC call via PyBridge"
+        }
+    }
+    return _json.dumps(snippets, indent=4, ensure_ascii=False)
+
+
+def _generate_cursorrules() -> str:
+    """Generate .cursorrules content for Cursor IDE."""
+    return '''# PyReact — Cursor IDE Rules
+
+You are working with PyReact, a Python-powered fullstack language. Files use `.pyreact` extension.
+
+## CRITICAL RULES
+- NEVER write raw React JSX, Flask Python, or HTML/CSS files
+- ALWAYS use `.pyreact` syntax inside `.pyreact` files
+- ALWAYS use `server.funcName()` for API calls — NEVER use `fetch()` or `axios`
+- ALWAYS use `use_state` (snake_case) — NEVER `useState` (camelCase)
+- ALWAYS use `use_effect` (snake_case) — NEVER `useEffect` (camelCase)
+- ALWAYS use `None` not `null`, `True`/`False` not `true`/`false`
+- Component names MUST be PascalCase (start with uppercase)
+
+## BLOCK SYNTAX
+- `server { }` — Backend Python functions (brace syntax)
+- `component Name():` — UI component (indent syntax, NOT braces)
+- `style { }` — Design tokens (brace syntax)
+- `pages { }` — Routing definitions (brace syntax)
+- `shared_state { }` — Global state (brace syntax)
+- `database { }` — ORM config (brace syntax)
+- `dependencies { }` — Package list (brace syntax)
+- `middleware { }` — Request interceptors (brace syntax)
+
+## COMPONENT PATTERN
+```python
+component MyComponent():
+    value, setValue = use_state("")
+    loading, setLoading = use_state(False)
+
+    def handleSubmit():
+        setLoading(True)
+        result = server.process_data(value)
+        setValue(result)
+        setLoading(False)
+
+    return (
+        <UI.Page>
+            <UI.Navbar title="My App" />
+            <div className="pt-24 max-w-xl mx-auto px-4">
+                <UI.Card title="Form">
+                    <UI.Input label="Value" value={value} onChange={setValue} />
+                    <UI.Button onClick={handleSubmit} loading={loading}>Submit</UI.Button>
+                </UI.Card>
+            </div>
+        </UI.Page>
+    )
+```
+
+## SERVER PATTERN
+```python
+server {
+    def get_items():
+        return {"items": [{"id": 1, "name": "Item 1"}]}
+
+    def create_item(name: str):
+        return {"status": "success", "id": 2}
+}
+```
+
+## UI COMPONENTS
+Layout: Page, Navbar, Sidebar, Dashboard
+Data: Card, MetricCard, Table, DataGrid, Badge, Text, Heading, Divider
+Forms: Button (variant: primary|secondary|danger|ghost), Input, TextArea, Select, Upload
+Feedback: Alert (type: info|success|error|warning), Toast, Spinner, Modal
+Navigation: Tabs, Dropdown, Accordion
+Advanced: Chart (type: bar|line), Calendar, Chatbot, NetworkStatus, useAuth
+
+## ROUTING
+```python
+pages {
+    Home = "/"
+    Dashboard = "/dashboard" [guard]
+}
+```
+
+## STATE HOOKS
+- `value, setValue = use_state(initial)` — local state
+- `use_effect(def(): ..., [deps])` — side effects
+- `shared.varName` — access shared_state variables
+
+## COMMON MISTAKES TO AVOID
+- `component Name { }` → WRONG, use `component Name():`
+- `const [x, setX] = useState(0)` → WRONG, use `x, setX = use_state(0)`
+- `fetch("/api/x")` → WRONG, use `server.x()`
+- `null` → WRONG, use `None`
+- `true`/`false` → WRONG, use `True`/`False`
+'''
+
+
+def _generate_cookbook_md() -> str:
+    """Generate COOKBOOK.md content for new PyReact projects."""
+    return '''# 🍳 PyReact Cookbook
+
+Koleksi pola kode siap pakai (Recipe Patterns) untuk membantu Anda dan AI Asisten Anda dalam menulis aplikasi menggunakan PyReact.
+
+---
+
+## 📖 Daftar Resep
+1. [Resep 1: Aplikasi CRUD Sederhana](#resep-1-aplikasi-crud-sederhana)
+2. [Resep 2: Autentikasi JWT & Halaman Terproteksi](#resep-2-autentikasi-jwt--halaman-terproteksi)
+3. [Resep 3: Unggah File (File Upload)](#resep-3-unggah-file-file-upload)
+4. [Resep 4: Dasbor dengan Visualisasi Grafik (Chart)](#resep-4-dasbor-dengan-visualisasi-grafik-chart)
+5. [Resep 5: Kolaborasi Real-time (Chat / Editor)](#resep-5-kolaborasi-real-time-chat--editor)
+
+---
+
+## Resep 1: Aplikasi CRUD Sederhana
+Menggunakan database SQLite bawaan untuk melakukan operasi Create, Read, Update, Delete.
+
+```python
+database {
+    provider = "sqlite"
+    url = "items.db"
+}
+
+server {
+    class DbItem(db.Model):
+        id = db.Column(db.Integer, primary_key=True)
+        name = db.Column(db.String(100), nullable=False)
+
+    def get_items():
+        items = DbItem.query.all()
+        return [{"id": i.id, "name": i.name} for i in items]
+
+    def add_item(name: str):
+        if not name:
+            return {"status": "error", "message": "Nama wajib diisi"}
+        item = DbItem(name=name)
+        db.session.add(item)
+        db.session.commit()
+        return {"status": "success", "id": item.id}
+
+    def delete_item(item_id: int):
+        item = DbItem.query.get(item_id)
+        if item:
+            db.session.delete(item)
+            db.session.commit()
+            return {"status": "success"}
+        return {"status": "error", "message": "Item tidak ditemukan"}
+}
+
+component Home():
+    items, setItems = use_state([])
+    newItem, setNewItem = use_state("")
+
+    def loadItems():
+        res = server.get_items()
+        setItems(res)
+
+    def handleAdd():
+        if newItem == "":
+            return
+        res = server.add_item(newItem)
+        if res.status == "success":
+            setNewItem("")
+            loadItems()
+
+    def handleDelete(id):
+        res = server.delete_item(id)
+        if res.status == "success":
+            loadItems()
+
+    use_effect(def():
+        loadItems()
+    , [])
+
+    return (
+        <UI.Page>
+            <UI.Navbar title="Katalog Item" />
+            <div className="pt-24 max-w-xl mx-auto px-4">
+                <UI.Card title="Tambah Item Baru">
+                    <div className="flex gap-2">
+                        <UI.Input value={newItem} onChange={setNewItem} placeholder="Nama item..." className="flex-1" />
+                        <UI.Button onClick={handleAdd}>Tambah</UI.Button>
+                    </div>
+                </UI.Card>
+
+                <div className="mt-6 space-y-3">
+                    {items.map(item => (
+                        <div key={item.id} className="flex justify-between items-center p-4 bg-slate-800 rounded-lg border border-slate-700">
+                            <UI.Text>{item.name}</UI.Text>
+                            <UI.Button onClick={() => handleDelete(item.id)} variant="danger">Hapus</UI.Button>
+                        </div>
+                    ))}
+                </div>
+            </div>
+        </UI.Page>
+    )
+
+style {
+    primary = "#3b82f6"
+    radius = "12px"
+}
+```
+
+---
+
+## Resep 2: Autentikasi JWT & Halaman Terproteksi
+Membatasi akses rute dengan `[guard]` dan otentikasi bawaan.
+
+```python
+pages {
+    Home      = "/"
+    Dashboard = "/dashboard" [guard]
+    Login     = "/login"
+}
+
+component Home():
+    return (
+        <UI.Page>
+            <UI.Navbar title="Situs Publik" />
+            <div className="pt-24 text-center">
+                <UI.Heading>Selamat Datang di Portal Publik</UI.Heading>
+                <div className="mt-4">
+                    <a href="/login" className="text-blue-500 underline">Masuk ke Dashboard</a>
+                </div>
+            </div>
+        </UI.Page>
+    )
+
+component Login():
+    username, setUsername = use_state("")
+    password, setPassword = use_state("")
+    error, setError = use_state("")
+
+    auth = UI.useAuth()
+
+    def handleLogin():
+        success = auth.login(username, password)
+        if success:
+            window.location.pathname = "/dashboard"
+        else:
+            setError("Username atau password salah")
+
+    return (
+        <UI.Page>
+            <div className="min-h-screen flex items-center justify-center p-4">
+                <UI.Card title="Form Login" className="w-full max-w-sm">
+                    {error and <UI.Alert type="error" className="mb-4">{error}</UI.Alert>}
+                    <UI.Input label="Username" value={username} onChange={setUsername} />
+                    <UI.Input label="Password" value={password} onChange={setPassword} type="password" />
+                    <UI.Button onClick={handleLogin} className="mt-4 w-full">Login</UI.Button>
+                </UI.Card>
+            </div>
+        </UI.Page>
+    )
+
+component Dashboard():
+    auth = UI.useAuth()
+
+    def handleLogout():
+        auth.logout()
+        window.location.pathname = "/login"
+
+    return (
+        <UI.Page>
+            <UI.Navbar title="Dashboard Admin" />
+            <div className="pt-24 max-w-xl mx-auto px-4 text-center">
+                <UI.Heading>Halaman Rahasia Terproteksi</UI.Heading>
+                <UI.Text className="mt-2 text-gray-400">Hanya bisa diakses jika Anda sudah masuk.</UI.Text>
+                <UI.Button onClick={handleLogout} variant="secondary" className="mt-6">Logout</UI.Button>
+            </div>
+        </UI.Page>
+    )
+
+style {
+    primary = "#10b981"
+    radius = "10px"
+}
+```
+
+---
+
+## Resep 3: Unggah File (File Upload)
+Mengirimkan berkas binar dari frontend ke backend Flask secara otomatis.
+
+```python
+server {
+    import os
+
+    def upload_photo(file):
+        upload_dir = "./uploads"
+        if not os.path.exists(upload_dir):
+            os.makedirs(upload_dir)
+        
+        filepath = os.path.join(upload_dir, file.filename)
+        file.save(filepath)
+        
+        return {"status": "success", "url": f"/uploads/{file.filename}"}
+}
+
+component Home():
+    status, setStatus = use_state("")
+    loading, setLoading = use_state(False)
+
+    def handleFile(fileObj):
+        setLoading(True)
+        res = server.upload_photo(fileObj)
+        if res.status == "success":
+            setStatus(f"Berhasil diunggah: {res.url}")
+        else:
+            setStatus("Gagal mengunggah file.")
+        setLoading(False)
+
+    return (
+        <UI.Page>
+            <UI.Navbar title="File Uploader" />
+            <div className="pt-24 max-w-md mx-auto px-4">
+                <UI.Card title="Unggah Foto Anda">
+                    <UI.Upload label="Pilih file gambar" onFile={handleFile} accept="image/*" />
+                    {loading and <UI.Spinner className="mt-4" />}
+                    {status and <UI.Alert type="info" className="mt-4">{status}</UI.Alert>}
+                </UI.Card>
+            </div>
+        </UI.Page>
+    )
+
+style {
+    primary = "#8b5cf6"
+    radius = "8px"
+}
+```
+
+---
+
+## Resep 4: Dasbor dengan Visualisasi Grafik (Chart)
+Menampilkan metrik performa dengan Chart bawaan SVG.
+
+```python
+server {
+    def get_revenue_data():
+        return {
+            "chart_data": [
+                {"label": "Jan", "value": 400},
+                {"label": "Feb", "value": 600},
+                {"label": "Mar", "value": 800},
+                {"label": "Apr", "value": 500},
+                {"label": "May", "value": 1200}
+            ],
+            "metrics": {
+                "total": "$3,500",
+                "growth": "+15%"
+            }
+        }
+}
+
+component Home():
+    data, setData = use_state(None)
+
+    use_effect(def():
+        res = server.get_revenue_data()
+        setData(res)
+    , [])
+
+    return (
+        <UI.Page>
+            <UI.Navbar title="Analytics Dashboard" />
+            <div className="pt-24 max-w-4xl mx-auto px-4 space-y-6">
+                <UI.Heading>Revenue Overview</UI.Heading>
+                
+                {data and (
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <UI.MetricCard label="Total Revenue" value={data.metrics.total} trend="up" />
+                        <UI.MetricCard label="Monthly Growth" value={data.metrics.growth} trend="up" />
+                        <UI.MetricCard label="Status" value="Healthy" />
+                    </div>
+                )}
+
+                {data and (
+                    <UI.Card title="Revenue Trend (Year-to-date)">
+                        <UI.Chart type="line" data={data.chart_data} height={300} />
+                    </UI.Card>
+                )}
+            </div>
+        </UI.Page>
+    )
+
+style {
+    primary = "#ec4899"
+    radius = "16px"
+}
+```
+
+---
+
+## Resep 5: Kolaborasi Real-time (Chat / Editor)
+Sinkronisasi state secara real-time antar pengguna menggunakan WebSocket bawaan.
+
+```python
+realtime {
+    provider = "websockets"
+    channels = ["chat-lounge"]
+}
+
+component Home():
+    doc, updateDoc, isLive = useRealtimeChannel("chat-lounge", "room_1")
+    myMessage, setMyMessage = use_state("")
+
+    def handleSend():
+        if myMessage == "":
+            return
+        
+        current_messages = doc.messages or []
+        updated = current_messages.concat([{"user": "Guest", "text": myMessage}])
+        updateDoc("messages", updated)
+        setMyMessage("")
+
+    return (
+        <UI.Page>
+            <UI.Navbar title="Live Chat lounge" />
+            <div className="pt-24 max-w-xl mx-auto px-4">
+                <UI.Card title={isLive ? "🟢 Online" : "🔴 Offline"}>
+                    <div className="h-64 overflow-y-auto space-y-2 p-2 bg-slate-900 rounded border border-slate-800">
+                        {doc.messages and doc.messages.map((m, idx) => (
+                            <div key={idx} className="p-2 bg-slate-850 rounded">
+                                <strong className="text-blue-400">{m.user}:</strong>
+                                <span className="ml-2 text-white">{m.text}</span>
+                            </div>
+                        ))}
+                    </div>
+                    
+                    <div className="flex gap-2 mt-4">
+                        <UI.Input value={myMessage} onChange={setMyMessage} placeholder="Ketik pesan..." className="flex-1" />
+                        <UI.Button onClick={handleSend}>Kirim</UI.Button>
+                    </div>
+                </UI.Card>
+            </div>
+        </UI.Page>
+    )
+
+style {
+    primary = "#06b6d4"
+    radius = "12px"
+}
+```
+'''
+
+
+def _create_components_dir(target: Path):
+    """Create components/ directory with example component."""
+    comp_dir = target / "components"
+    comp_dir.mkdir(exist_ok=True)
+    example = comp_dir / "Header.pyreact"
+    example.write_text('''component Header():
+
+    title, setTitle = use_state("My App")
+
+    return (
+        <UI.Navbar title={title}>
+            <a href="/" className="text-white/80 hover:text-white text-sm">Home</a>
+            <a href="/about" className="text-white/80 hover:text-white text-sm">About</a>
+        </UI.Navbar>
+    )
+''', encoding="utf-8")
+    # Also create a .gitkeep for the directory
+    (comp_dir / ".gitkeep").write_text("", encoding="utf-8")
+
+
 def cmd_new(args):
-    name = "my-app"
+    if not args:
+        cmd_init(args)
+        return
+    name = args[0]
     template = None
-    if args:
-        name = args[0]
-        if "--template" in args:
-            idx = args.index("--template")
-            if idx + 1 < len(args):
-                template = args[idx + 1]
+    if "--template" in args:
+        idx = args.index("--template")
+        if idx + 1 < len(args):
+            template = args[idx + 1]
 
     target = Path(name)
     if target.exists():
@@ -724,19 +1733,336 @@ def cmd_new(args):
         app_file = target / "app.pyreact"
         app_file.write_text(selected_code, encoding="utf-8")
         gitignore = target / ".gitignore"
-        gitignore.write_text("dist/\n__pycache__/\nnode_modules/\n.env\n")
+        gitignore.write_text("dist/\n__pycache__/\nnode_modules/\n.env\n.pyreact-hmr-trigger\n")
+        
+        # Write user-friendly README.md
+        readme_content = f"""# {name} 🚀
+
+Proyek ini dibangun menggunakan **PyReact** — Bahasa pemrograman web fullstack bertenaga Python.
+
+## 📦 Memulai Cepat
+
+```bash
+# 1. Masuk ke direktori
+cd {name}
+
+# 2. Jalankan server pengembangan (Flask + Vite)
+pyreact dev
+```
+
+## 📂 Struktur Proyek
+
+* `app.pyreact` — File entry point utama aplikasi Anda. Tulis kode server, database, rute, style, dan komponen di sini.
+* `AGENTS.md` — Panduan sintaksis PyReact khusus untuk asisten AI (seperti Cursor/Claude/Copilot).
+* `COOKBOOK.md` — Resep-resep pengerjaan umum (CRUD, Auth, Chart, dll.) siap pakai.
+* `.cursorrules` — File rules untuk Cursor IDE.
+* `components/` — Folder untuk meletakkan komponen tambahan.
+
+## 📚 Referensi Pembelajaran
+
+Sebelum meminta asisten AI menulis kode, pastikan AI membaca file **`AGENTS.md`** agar ia menggunakan sintaksis PyReact yang benar (misalnya `use_state` dan `server.func()`), bukan JSX/Flask mentah.
+
+Buka **`COOKBOOK.md`** untuk melihat contoh jika ingin menyalin pola umum.
+"""
         readme = target / "README.md"
-        readme.write_text(f"# {name}\n\nBuilt with [PyReact](https://pyreact.dev)\n\n```bash\ncd {name}\npyreact dev\n```\n")
+        readme.write_text(readme_content, encoding="utf-8")
+        
+        # Create AI context files & Cookbook
+        (target / "AGENTS.md").write_text(_generate_agents_md(), encoding="utf-8")
+        (target / "COOKBOOK.md").write_text(_generate_cookbook_md(), encoding="utf-8")
+        (target / ".cursorrules").write_text(_generate_cursorrules(), encoding="utf-8")
+        (target / "LLMS.txt").write_text(_generate_llms_txt(), encoding="utf-8")
+        (target / ".pyreact.code-snippets").write_text(_generate_vscode_snippets(), encoding="utf-8")
+        
+        # Create components/ directory with example
+        _create_components_dir(target)
+        
         print(f"\n  OK  Created project: {name}/")
+        print(f"       - app.pyreact (Main entry point)")
+        print(f"       - AGENTS.md (AI context)")
+        print(f"       - COOKBOOK.md (Recipe patterns)")
+        print(f"       - .cursorrules (Cursor IDE rules)")
+        print(f"       - components/ (Multi-file components)")
 
     print(f"  ->  cd {name}")
     print(f"  ->  pyreact dev\n")
 
+def _customize_scaffold_code(selected_code, enable_db, enable_auth, enable_pages):
+    content = selected_code
+    
+    # 1. Handle database block
+    if enable_db:
+        if "database {" not in content:
+            content = "database {\n    provider = \"sqlite\"\n    url = \"db.sqlite\"\n}\n\n" + content
+            
+        # Also add a simple database model inside server block if not already there
+        if "class Db" not in content and "server {" in content:
+            model_stub = """
+    class DbItem(db.Model):
+        __tablename__ = 'items'
+        id = db.Column(db.Integer, primary_key=True)
+        name = db.Column(db.String(255))
+        status = db.Column(db.String(50), default="active")
+"""
+            server_match = re.search(r"server\s*\{", content)
+            if server_match:
+                brace_idx = find_block_closing_brace(content, server_match.start())
+                if brace_idx != -1:
+                    content = content[:brace_idx] + model_stub + content[brace_idx:]
+                    
+    # 2. Handle dependencies block for auth
+    if enable_auth:
+        if "dependencies {" not in content:
+            content += "\n\ndependencies {\n    pip = [\"PyJWT\"]\n}\n"
+        elif "PyJWT" not in content and "pyjwt" not in content.lower():
+            dep_match = re.search(r"dependencies\s*\{", content)
+            if dep_match:
+                brace_idx = find_block_closing_brace(content, dep_match.start())
+                if brace_idx != -1:
+                    pip_match = re.search(r"pip\s*=\s*\[([^\]]*)\]", content[dep_match.start():brace_idx])
+                    if pip_match:
+                        orig_pip = pip_match.group(1)
+                        comma = ", " if orig_pip.strip() else ""
+                        new_pip = f"pip = [{orig_pip}{comma}\"PyJWT\"]"
+                        content = content.replace(pip_match.group(0), new_pip)
+                        
+        # Add auth backend methods to server block
+        if "def login(" not in content:
+            auth_funcs = """
+    def login(username, password):
+        if username == "admin" and password == "admin":
+            import jwt
+            import datetime
+            token = jwt.encode({"sub": username, "exp": datetime.datetime.utcnow() + datetime.timedelta(hours=24)}, "SECRET_KEY", algorithm="HS256")
+            return {"status": "success", "token": token, "user": {"username": username, "role": "admin"}}
+        return {"status": "error", "message": "Invalid username or password"}
+
+    def get_profile():
+        return {"status": "success", "user": {"username": "admin", "role": "admin"}}
+"""
+            server_match = re.search(r"server\s*\{", content)
+            if server_match:
+                brace_idx = find_block_closing_brace(content, server_match.start())
+                if brace_idx != -1:
+                    content = content[:brace_idx] + auth_funcs + content[brace_idx:]
+            else:
+                content = f"server {{{auth_funcs}}}\n\n" + content
+                
+    # 3. Handle routing / pages
+    if enable_pages:
+        new_pages = """    Login     = "/login"
+    Dashboard = "/dashboard" [guard]
+"""
+        if "pages {" not in content:
+            content += f"\n\npages {{\n    Home      = \"/\"\n{new_pages if enable_auth else ''}}}\n"
+        elif enable_auth:
+            pages_match = re.search(r"pages\s*\{", content)
+            if pages_match:
+                brace_idx = find_block_closing_brace(content, pages_match.start())
+                if brace_idx != -1:
+                    content = content[:brace_idx] + new_pages + content[brace_idx:]
+                    
+    # 4. Handle frontend component additions for auth
+    if enable_auth:
+        if "component Login():" not in content:
+            login_comp = """
+component Login():
+    username, setUsername = use_state("")
+    password, setPassword = use_state("")
+    error, setError = use_state(None)
+    auth = UI.useAuth()
+
+    def handleLogin():
+        success = auth.login(username, password)
+        if success:
+            window.location.pathname = "/dashboard"
+        else:
+            setError("Username atau password salah")
+
+    return (
+        <UI.Page>
+            <div className="min-h-screen flex items-center justify-center p-4 bg-slate-950">
+                <UI.Card title="Sign In" className="w-full max-w-sm">
+                    {error and <UI.Alert type="error" className="mb-4">{error}</UI.Alert>}
+                    <div className="space-y-4">
+                        <UI.Input label="Username" value={username} onChange={setUsername} placeholder="admin" />
+                        <UI.Input label="Password" value={password} onChange={setPassword} type="password" placeholder="admin" />
+                        <UI.Button onClick={handleLogin} className="w-full mt-4">Login</UI.Button>
+                    </div>
+                </UI.Card>
+            </div>
+        </UI.Page>
+    )
+
+component Dashboard():
+    auth = UI.useAuth()
+
+    def handleLogout():
+        auth.logout()
+        window.location.pathname = "/login"
+
+    return (
+        <UI.Page>
+            <UI.Navbar title="Dashboard Admin" />
+            <div className="pt-24 max-w-xl mx-auto px-4 text-center">
+                <UI.Heading>Halaman Rahasia Terproteksi</UI.Heading>
+                <UI.Text className="mt-2 text-gray-400">Hanya bisa diakses jika Anda sudah masuk.</UI.Text>
+                <UI.Button onClick={handleLogout} variant="secondary" className="mt-6">Logout</UI.Button>
+            </div>
+        </UI.Page>
+    )
+"""
+            content += login_comp
+            
+    return content
+
+
+def cmd_init(args):
+    print("\n" + BANNER)
+    print("  =======================================================")
+    print("  PYREACT INTERACTIVE WIZARD [Fase 3: Sprint 3]")
+    print("  =======================================================")
+    
+    # 1. Project name
+    try:
+        name = input("  1. Nama Proyek (default: my-pyreact-app): ").strip()
+    except (KeyboardInterrupt, EOFError):
+        print("\n  Inisialisasi dibatalkan.")
+        sys.exit(1)
+        
+    if not name:
+        name = "my-pyreact-app"
+        
+    target = Path(name)
+    if target.exists():
+        print(f"  X  Direktori '{name}' sudah ada.")
+        sys.exit(1)
+        
+    # 2. Template
+    print("\n  2. Pilih Template Dasar:")
+    print("     1) Standard Fullstack App (Flask Backend + React Frontend)")
+    print("     2) Simple CRUD Website (Task Manager dengan database SQLite)")
+    print("     3) Advanced Dashboard / Admin Panel (Tabel data & metrik analitis)")
+    print("     4) Real-time Collaborative App (CRDT-lite & WebSockets)")
+    print("     5) GraphQL API & Server App (GraphQL Schema + Client Hooks)")
+    print("     6) Secure RBAC & Auth Portal (Role-based access & Route Guards)")
+    print("     7) WebRTC Video Call / Audio Room (P2P Audio & Video Streaming)")
+    
+    try:
+        template_choice = input("     Pilih [1-7, default: 1]: ").strip()
+    except (KeyboardInterrupt, EOFError):
+        print("\n  Inisialisasi dibatalkan.")
+        sys.exit(1)
+        
+    if not template_choice:
+        template_choice = "1"
+        
+    templates = {
+        "1": (SCAFFOLD_APP, "Standard Fullstack App"),
+        "2": (CRUD_APP, "Simple CRUD Website"),
+        "3": (DASHBOARD_APP, "Advanced Dashboard / Admin Panel"),
+        "4": (COLLAB_APP, "Real-time Collaborative App"),
+        "5": (GRAPHQL_APP, "GraphQL API & Server App"),
+        "6": (RBAC_APP, "Secure RBAC & Auth Portal"),
+        "7": (WEBRTC_APP, "WebRTC Video Call / Audio Room")
+    }
+    
+    selected_code, template_name = templates.get(template_choice, (SCAFFOLD_APP, "Standard Fullstack App"))
+    print(f"     -> Memilih template: {template_name}")
+    
+    # 3. Database
+    try:
+        db_choice = input("\n  3. Aktifkan Database (SQLite)? [y/N]: ").strip().lower()
+    except (KeyboardInterrupt, EOFError):
+        print("\n  Inisialisasi dibatalkan.")
+        sys.exit(1)
+    enable_db = db_choice in ("y", "yes")
+    
+    # 4. Auth
+    try:
+        auth_choice = input("  4. Aktifkan JWT Authentication? [y/N]: ").strip().lower()
+    except (KeyboardInterrupt, EOFError):
+        print("\n  Inisialisasi dibatalkan.")
+        sys.exit(1)
+    enable_auth = auth_choice in ("y", "yes")
+    
+    # 5. Routing
+    try:
+        pages_choice = input("  5. Aktifkan Routing / Pages? [y/N]: ").strip().lower()
+    except (KeyboardInterrupt, EOFError):
+        print("\n  Inisialisasi dibatalkan.")
+        sys.exit(1)
+    enable_pages = pages_choice in ("y", "yes")
+    
+    print("\n  [INFO] Menyiapkan proyek...")
+    
+    # Generate customized scaffold code
+    final_code = _customize_scaffold_code(selected_code, enable_db, enable_auth, enable_pages)
+    
+    # Write files
+    target.mkdir(parents=True)
+    app_file = target / "app.pyreact"
+    app_file.write_text(final_code, encoding="utf-8")
+    
+    gitignore = target / ".gitignore"
+    gitignore.write_text("dist/\n__pycache__/\nnode_modules/\n.env\n.pyreact-hmr-trigger\n")
+    
+    # Write README.md
+    readme_content = f"""# {name} 🚀
+
+Proyek ini dibangun menggunakan **PyReact** — Bahasa pemrograman web fullstack bertenaga Python.
+
+## 📦 Memulai Cepat
+
+```bash
+# 1. Masuk ke direktori
+cd {name}
+
+# 2. Jalankan server pengembangan (Flask + Vite)
+pyreact dev
+```
+
+## 📂 Struktur Proyek
+
+* `app.pyreact` — File entry point utama aplikasi Anda. Tulis kode server, database, rute, style, dan komponen di sini.
+* `AGENTS.md` — Panduan sintaksis PyReact khusus untuk asisten AI (seperti Cursor/Claude/Copilot).
+* `COOKBOOK.md` — Resep-resep pengerjaan umum (CRUD, Auth, Chart, dll.) siap pakai.
+* `.cursorrules` — File rules untuk Cursor IDE.
+* `components/` — Folder untuk meletakkan komponen tambahan.
+
+## 📚 Referensi Pembelajaran
+
+Sebelum meminta asisten AI menulis kode, pastikan AI membaca file **`AGENTS.md`** agar ia menggunakan sintaksis PyReact yang benar (misalnya `use_state` dan `server.func()`), bukan JSX/Flask mentah.
+
+Buka **`COOKBOOK.md`** untuk melihat contoh jika ingin menyalin pola umum.
+"""
+    readme = target / "README.md"
+    readme.write_text(readme_content, encoding="utf-8")
+    
+    # Create AI context files & Cookbook
+    (target / "AGENTS.md").write_text(_generate_agents_md(), encoding="utf-8")
+    (target / "COOKBOOK.md").write_text(_generate_cookbook_md(), encoding="utf-8")
+    (target / ".cursorrules").write_text(_generate_cursorrules(), encoding="utf-8")
+    (target / "LLMS.txt").write_text(_generate_llms_txt(), encoding="utf-8")
+    (target / ".pyreact.code-snippets").write_text(_generate_vscode_snippets(), encoding="utf-8")
+    
+    # Create components/ directory with example
+    _create_components_dir(target)
+    
+    print(f"\n  OK  Created project: {name}/")
+    print(f"       - app.pyreact (Main entry point)")
+    print(f"       - AGENTS.md (AI context)")
+    print(f"       - COOKBOOK.md (Recipe patterns)")
+    print(f"       - .cursorrules (Cursor IDE rules)")
+    print(f"       - components/ (Multi-file components)")
+    print(f"  ->  cd {name}")
+    print(f"  ->  pyreact dev\n")
 
 
 def cmd_build(args):
     entry = "app.pyreact"
     out_dir = "dist"
+    analyze = "--analyze" in args
     for i, a in enumerate(args):
         if a == "--out" and i + 1 < len(args):
             out_dir = args[i + 1]
@@ -762,6 +2088,44 @@ def cmd_build(args):
                        shell=(sys.platform == "win32"))
 
     print(f"\n  OK  Build complete -> {out_dir}/\n")
+
+    if analyze:
+        print("  [ANALYZE] Bundle Size Report\n")
+        import os
+        dist_path = Path(out_dir)
+        total_bytes = 0
+        file_sizes = []
+        for root, _, files in os.walk(dist_path):
+            for fname in files:
+                fpath = Path(root) / fname
+                size = fpath.stat().st_size
+                total_bytes += size
+                rel = fpath.relative_to(dist_path)
+                file_sizes.append((size, str(rel)))
+        file_sizes.sort(reverse=True)
+        print(f"  {'File':<55} {'Size':>10}")
+        print(f"  {'-'*55} {'-'*10}")
+        for size, rel in file_sizes[:20]:
+            bar = '█' * min(30, max(1, size // 10000))
+            if size >= 1024 * 1024:
+                size_str = f"{size / 1024 / 1024:.1f} MB"
+            elif size >= 1024:
+                size_str = f"{size / 1024:.1f} KB"
+            else:
+                size_str = f"{size} B"
+            print(f"  {rel:<55} {size_str:>10}")
+        if len(file_sizes) > 20:
+            print(f"  ... and {len(file_sizes) - 20} more files")
+        total_kb = total_bytes / 1024
+        total_mb = total_kb / 1024
+        print(f"\n  Total dist size: {total_mb:.2f} MB ({total_kb:.0f} KB)")
+        if total_kb < 150:
+            print("  OK  Bundle size is optimal (< 150 KB)")
+        elif total_kb < 500:
+            print("  !   Bundle size is acceptable (< 500 KB)")
+        else:
+            print("  X   Bundle size is large — consider code splitting")
+        print()
 
 
 def cmd_dev(args):
@@ -811,19 +2175,50 @@ def cmd_dev(args):
         subprocess.run(["npm", "run", "dev"], cwd=str(fe_dir),
                        shell=(sys.platform == "win32"))
 
+    def _trigger_vite_hmr():
+        """Send a full-reload signal to the Vite dev server via custom HMR event."""
+        try:
+            import urllib.request
+            import json
+            # Vite's /__pyreact_hmr endpoint will be handled by a small plugin
+            # We simply touch a trigger file that Vite watches
+            hmr_trigger = fe_dir / ".pyreact-hmr-trigger"
+            hmr_trigger.write_text(str(os.getmtime(entry)), encoding="utf-8")
+        except Exception:
+            pass
+
     def watch_file():
         import time
         last_mtime = os.path.getmtime(entry)
         heal_flag  = "--heal" in args
+        # Also watch components/ directory for multi-file support
+        components_dir = Path(entry).parent / "components"
+        comp_mtimes = {}
+        if components_dir.is_dir():
+            for cf in components_dir.glob("*.pyreact"):
+                comp_mtimes[str(cf)] = os.path.getmtime(str(cf))
         while True:
-            time.sleep(1)
+            time.sleep(0.8)  # faster polling for better DX
             try:
                 current_mtime = os.path.getmtime(entry)
-                if current_mtime > last_mtime:
-                    print(f"\n  [Watcher] Perubahan terdeteksi di {entry}. Mengompilasi ulang...")
+                changed = current_mtime > last_mtime
+                # Check components/ directory for changes too
+                if components_dir.is_dir():
+                    for cf in components_dir.glob("*.pyreact"):
+                        cf_str = str(cf)
+                        try:
+                            cf_mtime = os.path.getmtime(cf_str)
+                            if comp_mtimes.get(cf_str, 0) < cf_mtime:
+                                changed = True
+                                comp_mtimes[cf_str] = cf_mtime
+                        except FileNotFoundError:
+                            pass
+                if changed:
+                    print(f"\n  [Watcher] Perubahan terdeteksi. Mengompilasi ulang...")
                     try:
                         _compile(entry, "dist", run_healing=heal_flag)
                         print("  [Watcher] Kompilasi ulang berhasil.")
+                        _trigger_vite_hmr()
                     except SystemExit:
                         if heal_flag:
                             print("  [Watcher] Healing gagal. Menunggu perbaikan manual...")
@@ -864,12 +2259,406 @@ def cmd_serve(args):
                        cwd=str(be_dir))
 
 
+def find_block_closing_brace(content, start_idx):
+    """Find the index of the matching closing brace for a block, ignoring comments, strings, and nested braces."""
+    brace_pos = content.find("{", start_idx)
+    if brace_pos == -1:
+        return -1
+        
+    depth = 0
+    in_string = False
+    string_char = None
+    in_comment = False
+    
+    i = brace_pos
+    while i < len(content):
+        c = content[i]
+        
+        # Handle comments
+        if in_comment:
+            if c == "\n":
+                in_comment = False
+            i += 1
+            continue
+        if c == "#" and not in_string:
+            in_comment = True
+            i += 1
+            continue
+            
+        # Handle strings
+        if in_string:
+            # Check triple quotes
+            if string_char in ('"""', "'''"):
+                if content[i:i+3] == string_char:
+                    in_string = False
+                    i += 3
+                    continue
+            elif c == string_char:
+                # check escape
+                if i > 0 and content[i-1] != "\\":
+                    in_string = False
+            i += 1
+            continue
+            
+        if c in ('"', "'"):
+            if content[i:i+3] in ('"""', "'''"):
+                in_string = True
+                string_char = content[i:i+3]
+                i += 3
+            else:
+                in_string = True
+                string_char = c
+                i += 1
+            continue
+            
+        if c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                return i
+        i += 1
+        
+    return -1
+
+
+def _add_page_route_to_app(name, url_path):
+    app_file = Path("app.pyreact")
+    if not app_file.exists():
+        return
+    content = app_file.read_text(encoding="utf-8")
+    
+    # Check if pages block exists
+    pages_match = re.search(r"pages\s*\{([^}]*)\}", content)
+    if pages_match:
+        pages_content = pages_match.group(1)
+        # Check if route already exists
+        if f"{name} " in pages_content or f"{name}=" in pages_content:
+            return # already registered
+        
+        # Insert before closing brace of pages block
+        new_route = f"    {name:<9} = \"{url_path}\"\n"
+        # Find index of pages block closing brace
+        brace_idx = find_block_closing_brace(content, pages_match.start())
+        if brace_idx != -1:
+            new_content = content[:brace_idx] + new_route + content[brace_idx:]
+            app_file.write_text(new_content, encoding="utf-8")
+            print(f"  OK  Added route '{url_path}' -> {name} to app.pyreact pages block.")
+    else:
+        # Create pages block at the end of app.pyreact
+        pages_block = f"\n\npages {{\n    Home      = \"/\"\n    {name:<9} = \"{url_path}\"\n}}\n"
+        app_file.write_text(content + pages_block, encoding="utf-8")
+        print(f"  OK  Created pages block and added route '{url_path}' -> {name} to app.pyreact.")
+
+
+def _add_server_function_to_app(func_name, params):
+    app_file = Path("app.pyreact")
+    if not app_file.exists():
+        return
+    content = app_file.read_text(encoding="utf-8")
+    
+    # Check if function already exists in server block
+    if f"def {func_name}" in content:
+        return
+        
+    # Prepare params string
+    params_str = ", ".join(params)
+    
+    func_stub = f"\n    def {func_name}({params_str}):\n        # API logic here\n        return {{\n            \"status\": \"success\",\n            \"message\": \"API {func_name} called successfully\"\n        }}\n"
+    
+    server_match = re.search(r"server\s*\{", content)
+    if server_match:
+        # Find closing brace of server block
+        brace_idx = find_block_closing_brace(content, server_match.start())
+        if brace_idx != -1:
+            new_content = content[:brace_idx] + func_stub + content[brace_idx:]
+            app_file.write_text(new_content, encoding="utf-8")
+            print(f"  OK  Generated backend API '{func_name}' in app.pyreact server block.")
+    else:
+        # Create server block at the beginning
+        server_block = f"server {{\n{func_stub}}}\n\n"
+        app_file.write_text(server_block + content, encoding="utf-8")
+        print(f"  OK  Created server block and added API '{func_name}' to app.pyreact.")
+
+
+def _add_database_model_to_app(name, fields):
+    app_file = Path("app.pyreact")
+    if not app_file.exists():
+        return
+    content = app_file.read_text(encoding="utf-8")
+    
+    # Check if model already exists
+    if f"class Db{name}" in content:
+        return
+        
+    model_lines = [
+        f"    class Db{name}(db.Model):",
+        f"        __tablename__ = '{name.lower()}s'",
+        f"        id = db.Column(db.Integer, primary_key=True)"
+    ]
+    
+    for field in fields:
+        if ":" in field:
+            f_name, f_type = field.split(":", 1)
+        else:
+            f_name, f_type = field, "str"
+            
+        f_name = f_name.strip()
+        f_type = f_type.strip().lower()
+        
+        if f_type in ("int", "integer"):
+            col_type = "db.Integer"
+        elif f_type in ("bool", "boolean"):
+            col_type = "db.Boolean"
+        elif f_type in ("float", "double"):
+            col_type = "db.Float"
+        else:
+            col_type = "db.String(255)"
+            
+        model_lines.append(f"        {f_name} = db.Column({col_type})")
+        
+    model_stub = "\n" + "\n".join(model_lines) + "\n"
+    
+    server_match = re.search(r"server\s*\{", content)
+    if server_match:
+        # Find closing brace of server block
+        brace_idx = find_block_closing_brace(content, server_match.start())
+        if brace_idx != -1:
+            new_content = content[:brace_idx] + model_stub + content[brace_idx:]
+            app_file.write_text(new_content, encoding="utf-8")
+            print(f"  OK  Generated Database Model 'Db{name}' in app.pyreact server block.")
+    else:
+        # Create server block
+        server_block = f"server {{\n{model_stub}}}\n\n"
+        app_file.write_text(server_block + content, encoding="utf-8")
+        print(f"  OK  Created server block and added database model 'Db{name}' to app.pyreact.")
+
+
+def _scaffold_auth():
+    app_file = Path("app.pyreact")
+    if not app_file.exists():
+        print("  X  app.pyreact not found. Please run this in the project root.")
+        return
+        
+    content = app_file.read_text(encoding="utf-8")
+    
+    # 1. Add PyJWT to dependencies if they exist
+    dep_match = re.search(r"dependencies\s*\{", content)
+    if dep_match:
+        if "PyJWT" not in content and "pyjwt" not in content.lower():
+            brace_idx = find_block_closing_brace(content, dep_match.start())
+            if brace_idx != -1:
+                # Find pip array or append it
+                pip_match = re.search(r"pip\s*=\s*\[([^\]]*)\]", content[dep_match.start():brace_idx])
+                if pip_match:
+                    orig_pip = pip_match.group(1)
+                    comma = ", " if orig_pip.strip() else ""
+                    new_pip = f"pip = [{orig_pip}{comma}\"PyJWT\"]"
+                    content = content.replace(pip_match.group(0), new_pip)
+    else:
+        content += "\n\ndependencies {\n    pip = [\"PyJWT\"]\n}\n"
+        
+    # 2. Add auth functions to server block
+    auth_funcs = """
+    def login(username, password):
+        # Boilerplate auth
+        if username == "admin" and password == "admin":
+            import jwt
+            import datetime
+            token = jwt.encode({"sub": username, "exp": datetime.datetime.utcnow() + datetime.timedelta(hours=24)}, "SECRET_KEY", algorithm="HS256")
+            return {"status": "success", "token": token, "user": {"username": username, "role": "admin"}}
+        return {"status": "error", "message": "Invalid username or password"}
+
+    def get_profile():
+        return {"status": "success", "user": {"username": "admin", "role": "admin"}}
+"""
+    server_match = re.search(r"server\s*\{", content)
+    if server_match:
+        brace_idx = find_block_closing_brace(content, server_match.start())
+        if brace_idx != -1:
+            content = content[:brace_idx] + auth_funcs + content[brace_idx:]
+    else:
+        content = f"server {{{auth_funcs}}}\n\n" + content
+        
+    # 3. Add Login and Dashboard pages to routing
+    pages_match = re.search(r"pages\s*\{", content)
+    new_pages = """    Login     = "/login"
+    Dashboard = "/dashboard" [guard]
+"""
+    if pages_match:
+        brace_idx = find_block_closing_brace(content, pages_match.start())
+        if brace_idx != -1:
+            content = content[:brace_idx] + new_pages + content[brace_idx:]
+    else:
+        content += f"\n\npages {{\n{new_pages}}}\n"
+        
+    # 4. Append component stubs to app.pyreact
+    login_comp = """
+component Login():
+    username, setUsername = use_state("")
+    password, setPassword = use_state("")
+    error, setError = use_state(None)
+    auth = UI.useAuth()
+
+    def handleLogin():
+        success = auth.login(username, password)
+        if success:
+            window.location.pathname = "/dashboard"
+        else:
+            setError("Username atau password salah")
+
+    return (
+        <UI.Page>
+            <div className="min-h-screen flex items-center justify-center p-4 bg-slate-950">
+                <UI.Card title="Sign In" className="w-full max-w-sm">
+                    {error and <UI.Alert type="error" className="mb-4">{error}</UI.Alert>}
+                    <div className="space-y-4">
+                        <UI.Input label="Username" value={username} onChange={setUsername} placeholder="admin" />
+                        <UI.Input label="Password" value={password} onChange={setPassword} type="password" placeholder="admin" />
+                        <UI.Button onClick={handleLogin} className="w-full mt-4">Login</UI.Button>
+                    </div>
+                </UI.Card>
+            </div>
+        </UI.Page>
+    )
+
+component Dashboard():
+    auth = UI.useAuth()
+
+    def handleLogout():
+        auth.logout()
+        window.location.pathname = "/login"
+
+    return (
+        <UI.Page>
+            <UI.Navbar title="Dashboard Admin" />
+            <div className="pt-24 max-w-xl mx-auto px-4 text-center">
+                <UI.Heading>Halaman Rahasia Terproteksi</UI.Heading>
+                <UI.Text className="mt-2 text-gray-400">Hanya bisa diakses jika Anda sudah masuk.</UI.Text>
+                <UI.Button onClick={handleLogout} variant="secondary" className="mt-6">Logout</UI.Button>
+            </div>
+        </UI.Page>
+    )
+"""
+    content += login_comp
+    app_file.write_text(content, encoding="utf-8")
+    print("  OK  Successfully scaffolded Auth system (JWT Server methods + Login & Dashboard Page Views).")
+
+
 def cmd_generate(args):
-    if not args or args[0] != "component":
-        print("  Usage: pyreact generate component <Name>")
+    """Generate components, pages, APIs, database models, or auth scaffolding."""
+    if not args:
+        print("  Usage:")
+        print("    pyreact generate component <Name> [--crud]")
+        print("    pyreact generate page <Name> [--url /path]")
+        print("    pyreact generate api <func_name> [params...]")
+        print("    pyreact generate model <Name> [fields...]")
+        print("    pyreact generate auth")
         sys.exit(1)
-    name = args[1] if len(args) > 1 else "MyComponent"
-    stub = f"""\
+
+    subcmd = args[0]
+    rest = args[1:]
+
+    if subcmd == "component":
+        if not rest:
+            print("  Usage: pyreact generate component <Name> [--crud]")
+            sys.exit(1)
+        name = rest[0]
+        is_crud = "--crud" in rest
+        
+        # Decide output location
+        components_dir = Path("components")
+        if components_dir.is_dir():
+            fname = components_dir / f"{name}.pyreact"
+        else:
+            fname = Path(f"{name}.pyreact")
+            
+        if is_crud:
+            stub = f"""\
+component {name}():
+    items, setItems = use_state([])
+    loading, setLoading = use_state(False)
+    newItemName, setNewItemName = use_state("")
+    editingId, setEditingId = use_state(None)
+    editName, setEditName = use_state("")
+
+    def loadItems():
+        setLoading(True)
+        res = server.get_items()
+        setItems(res)
+        setLoading(False)
+
+    use_effect(def():
+        loadItems()
+    , [])
+
+    def handleCreate():
+        if newItemName == "":
+            return
+        server.create_item(newItemName)
+        setNewItemName("")
+        loadItems()
+
+    def handleUpdate(id):
+        if editName == "":
+            return
+        server.update_item(id, editName)
+        setEditingId(None)
+        setEditName("")
+        loadItems()
+
+    def handleDelete(id):
+        server.delete_item(id)
+        loadItems()
+
+    return (
+        <UI.Card title="{name} Manager">
+            <div className="flex gap-2 mb-4">
+                <UI.Input label="New Item Name" value={{newItemName}} onChange={{setNewItemName}} />
+                <UI.Button onClick={{handleCreate}}>Add</UI.Button>
+            </div>
+            
+            {{loading ? (
+                <UI.Spinner />
+            ) : (
+                <UI.Table headers={["ID", "Name", "Actions"]}>
+                    {{items.map(item => (
+                        <tr key={{item.id}}>
+                            <td>{{item.id}}</td>
+                            <td>
+                                {{editingId == item.id ? (
+                                    <UI.Input value={{editName}} onChange={{setEditName}} />
+                                ) : (
+                                    item.name
+                                )}}
+                            </td>
+                            <td>
+                                {{editingId == item.id ? (
+                                    <div className="flex gap-2">
+                                        <UI.Button onClick={{def(): handleUpdate(item.id);}}>Save</UI.Button>
+                                        <UI.Button onClick={{def(): setEditingId(None);}}>Cancel</UI.Button>
+                                    </div>
+                                ) : (
+                                    <div className="flex gap-2">
+                                        <UI.Button onClick={{def(): setEditingId(item.id); setEditName(item.name);}}>Edit</UI.Button>
+                                        <UI.Button onClick={{def(): handleDelete(item.id);}} variant="danger">Delete</UI.Button>
+                                    </div>
+                                )}}
+                            </td>
+                        </tr>
+                    ))}}
+                </UI.Table>
+            )}}
+        </UI.Card>
+    )
+"""
+            # Ensure backend helper functions exist in app.pyreact for the CRUD component
+            _add_server_function_to_app("get_items", [])
+            _add_server_function_to_app("create_item", ["name"])
+            _add_server_function_to_app("update_item", ["item_id", "name"])
+            _add_server_function_to_app("delete_item", ["item_id"])
+        else:
+            stub = f"""\
 component {name}():
 
     value, setValue = use_state("")
@@ -885,9 +2674,70 @@ component {name}():
         </UI.Card>
     )
 """
-    fname = f"{name}.pyreact.component"
-    Path(fname).write_text(stub, encoding="utf-8")
-    print(f"  OK  Generated component: {fname}")
+        fname.write_text(stub, encoding="utf-8")
+        print(f"  OK  Generated component: {fname}")
+
+    elif subcmd == "page":
+        if not rest:
+            print("  Usage: pyreact generate page <Name> [--url /path]")
+            sys.exit(1)
+        name = rest[0]
+        url_path = f"/{name.lower()}"
+        if "--url" in rest:
+            idx = rest.index("--url")
+            if idx + 1 < len(rest):
+                url_path = rest[idx + 1]
+                
+        # Scaffold Page View
+        components_dir = Path("components")
+        if components_dir.is_dir():
+            fname = components_dir / f"{name}.pyreact"
+        else:
+            fname = Path(f"{name}.pyreact")
+            
+        stub = f"""\
+component {name}():
+
+    return (
+        <UI.Page>
+            <UI.Navbar title="{name} Page" />
+            <div className="pt-24 max-w-4xl mx-auto px-4">
+                <UI.Heading>{name}</UI.Heading>
+                <UI.Text className="mt-2 text-gray-400">
+                    Welcome to the {name} page. You can customize this page layout here.
+                </UI.Text>
+            </div>
+        </UI.Page>
+    )
+"""
+        fname.write_text(stub, encoding="utf-8")
+        print(f"  OK  Generated page view component: {fname}")
+        
+        # Add route mapping in app.pyreact
+        _add_page_route_to_app(name, url_path)
+
+    elif subcmd == "api":
+        if not rest:
+            print("  Usage: pyreact generate api <func_name> [params...]")
+            sys.exit(1)
+        func_name = rest[0]
+        params = [p for p in rest[1:] if not p.startswith("-")]
+        _add_server_function_to_app(func_name, params)
+
+    elif subcmd == "model":
+        if not rest:
+            print("  Usage: pyreact generate model <Name> [fields...]")
+            sys.exit(1)
+        model_name = rest[0]
+        fields = rest[1:]
+        _add_database_model_to_app(model_name, fields)
+
+    elif subcmd == "auth":
+        _scaffold_auth()
+
+    else:
+        print(f"  X  Unknown generator target: {subcmd}")
+        sys.exit(1)
 
 
 def cmd_compile(args):
@@ -995,6 +2845,8 @@ def cmd_test(args):
         if a == "--out" and i + 1 < len(args): out_dir = args[i + 1]
         if a == "--target" and i + 1 < len(args): target = args[i + 1]
         
+    watch_mode = "--watch" in args
+
     if not Path(entry).exists():
         pyreact_files = list(Path(".").glob("*.pyreact"))
         if pyreact_files:
@@ -1002,20 +2854,73 @@ def cmd_test(args):
         else:
             print("  X  No PyReact entry file (e.g. app.pyreact) found.")
             sys.exit(1)
-            
-    print(f"  [TEST] Parsing {entry} to build AST...")
-    from pyreact.compiler.lexer import Lexer
-    from pyreact.compiler.parser import Parser
-    from pyreact.compiler.tester import run_testing_suite
-    
+
+    def _run_once():
+        print(f"  [TEST] Parsing {entry} to build AST...")
+        from pyreact.compiler.lexer import Lexer
+        from pyreact.compiler.parser import Parser
+        from pyreact.compiler.tester import run_testing_suite
+
+        try:
+            source = Path(entry).read_text(encoding="utf-8")
+            lexer = Lexer(source)
+            tokens = lexer.tokenize()
+            parser = Parser(tokens)
+            ast = parser.parse()
+        except Exception as pe:
+            from pyreact.compiler.parser import ParseError
+            from pyreact.compiler.lexer import LexerError
+            if isinstance(pe, (ParseError, LexerError)):
+                from pyreact.compiler.errors import format_compilation_error
+                err_line = getattr(pe, "line", 1)
+                err_col  = getattr(pe, "col", 1)
+                suggestion = getattr(pe, "suggestion", "")
+                err_msg = str(pe)
+                formatted = format_compilation_error(err_msg, err_line, err_col, source, suggestion)
+                print(formatted)
+            else:
+                print(f"  X  Parser Error: {pe}")
+            return False
+        return True
+
+    if not watch_mode:
+        _run_once()
+        return
+
+    # --watch mode: auto-rerun on file changes
+    print("  [watch] Watching .pyreact files for changes... (Ctrl+C to stop)\n")
+    import time
+    import hashlib
+
+    def _file_hash(path):
+        try:
+            return hashlib.md5(Path(path).read_bytes()).hexdigest()
+        except Exception:
+            return ""
+
+    watched = {str(p): _file_hash(p) for p in Path('.').rglob('*.pyreact')}
+    print(f"  Watching {len(watched)} file(s): {', '.join(watched.keys())}\n")
+    _run_once()
+
     try:
-        source = Path(entry).read_text(encoding="utf-8")
-        lexer = Lexer(source)
-        tokens = lexer.tokenize()
-        parser = Parser(tokens)
-        ast = parser.parse()
-    except Exception as e:
-        print(f"  X  Parser Error: {e}")
+        while True:
+            time.sleep(1)
+            changed = False
+            current = {str(p): _file_hash(p) for p in Path('.').rglob('*.pyreact')}
+            for path, h in current.items():
+                if watched.get(path) != h:
+                    print(f"\n  [watch] Changed: {path} — re-running tests...\n")
+                    changed = True
+            for path in set(watched.keys()) - set(current.keys()):
+                print(f"\n  [watch] Removed: {path}")
+                changed = True
+            watched = current
+            if changed:
+                _run_once()
+    except KeyboardInterrupt:
+        print("\n  [watch] Stopped.")
+        return
+
         sys.exit(1)
         
     print(f"  [TEST] Recompiling project to {out_dir} (target: {target})...")
@@ -1409,6 +3314,121 @@ def cmd_deploy(args):
     
     project_name = Path(os.getcwd()).name
     dist_dir = Path("dist")
+
+    # Read --platform / -p argument
+    platform = None
+    for i, a in enumerate(args):
+        if a in ("--platform", "-p") and i + 1 < len(args):
+            platform = args[i + 1].lower()
+
+    if platform:
+        if platform not in ("vercel", "railway", "fly", "render", "digitalocean"):
+            print(f"  X  Unsupported platform: {platform}")
+            print("     Supported: vercel, railway, fly, render, digitalocean")
+            sys.exit(1)
+
+        print(f"\n  =======================================================")
+        print(f"  PYREACT CLOUD DEPLOYMENT WIZARD: {platform.upper()}")
+        print(f"  =======================================================")
+
+        if platform == "vercel":
+            vercel_config = {
+                "version": 2,
+                "builds": [
+                    { "src": "dist/frontend/**/*", "use": "@vercel/static" },
+                    { "src": "dist/backend/app.py", "use": "@vercel/python" }
+                ],
+                "routes": [
+                    { "src": "/api/(.*)", "dest": "dist/backend/app.py" },
+                    { "src": "/(.*)", "dest": "dist/frontend/$1" }
+                ]
+            }
+            Path("vercel.json").write_text(json.dumps(vercel_config, indent=2), encoding="utf-8")
+            print("  [SUCCESS] Generated vercel.json in project root.")
+            print("\n  Deployment Instructions for Vercel:")
+            print("  1. Install Vercel CLI: `npm i -g vercel`")
+            print("  2. Run: `vercel` or `vercel --prod` to deploy.")
+
+        elif platform in ("railway", "fly", "render", "digitalocean"):
+            dockerfile = (
+                "# Dockerfile generated by PyReact v2.0\n"
+                "FROM python:3.11-slim\n"
+                "WORKDIR /app\n"
+                "COPY dist/backend/requirements.txt ./\n"
+                "RUN pip install --no-cache-dir -r requirements.txt gunicorn\n"
+                "COPY dist/backend/ ./\n"
+                "ENV PORT=8080\n"
+                "EXPOSE 8080\n"
+                "CMD [\"gunicorn\", \"--bind\", \"0.0.0.0:8080\", \"app:app\"]\n"
+            )
+            Path("Dockerfile").write_text(dockerfile, encoding="utf-8")
+            print("  [SUCCESS] Generated Dockerfile in project root.")
+
+            if platform == "railway":
+                railway_config = {
+                    "$schema": "https://railway.app/railway.schema.json",
+                    "build": { "builder": "docker" },
+                    "deploy": {
+                        "startCommand": "gunicorn --bind 0.0.0.0:$PORT app:app",
+                        "restartPolicyType": "on_failure"
+                    }
+                }
+                Path("railway.json").write_text(json.dumps(railway_config, indent=2), encoding="utf-8")
+                print("  [SUCCESS] Generated railway.json in project root.")
+                print("\n  Deployment Instructions for Railway:")
+                print("  1. Install Railway CLI or connect your GitHub repository.")
+                print("  2. Run: `railway up` to deploy.")
+
+            elif platform == "fly":
+                fly_config = (
+                    f"app = \"pyreact-{project_name.lower()}\"\n"
+                    "primary_region = \"cdg\"\n\n"
+                    "[http_service]\n"
+                    "  internal_port = 8080\n"
+                    "  force_https = true\n"
+                    "  auto_stop_machines = true\n"
+                    "  auto_start_machines = true\n"
+                    "  min_machines_running = 0\n"
+                    "  processes = [\"app\"]\n"
+                )
+                Path("fly.toml").write_text(fly_config, encoding="utf-8")
+                print("  [SUCCESS] Generated fly.toml in project root.")
+                print("\n  Deployment Instructions for Fly.io:")
+                print("  1. Install Flyctl CLI.")
+                print("  2. Run: `fly deploy` to launch on Fly.io.")
+
+            elif platform == "render":
+                render_config = (
+                    "services:\n"
+                    f"  - type: web\n"
+                    f"    name: pyreact-{project_name.lower()}\n"
+                    "    env: docker\n"
+                    "    buildCommand: \"\"\n"
+                    "    startCommand: \"gunicorn --bind 0.0.0.0:8080 app:app\"\n"
+                )
+                Path("render.yaml").write_text(render_config, encoding="utf-8")
+                print("  [SUCCESS] Generated render.yaml in project root.")
+                print("\n  Deployment Instructions for Render:")
+                print("  1. Connect your Github repo to Render.com.")
+                print("  2. Select 'Docker' environment or use render.yaml Blueprint.")
+
+            elif platform == "digitalocean":
+                do_config = (
+                    f"name: pyreact-{project_name.lower()}\n"
+                    "services:\n"
+                    "  - name: web\n"
+                    "    environment_slug: docker\n"
+                    "    github:\n"
+                    "      branch: main\n"
+                    "      deploy_on_push: true\n"
+                )
+                Path("app.yaml").write_text(do_config, encoding="utf-8")
+                print("  [SUCCESS] Generated app.yaml in project root.")
+                print("\n  Deployment Instructions for DigitalOcean:")
+                print("  1. Deploy using App Platform on cloud.digitalocean.com.")
+                print("  2. Connect your repository and supply app.yaml.")
+        print("  =======================================================\n")
+        return
     
     if not dist_dir.exists():
         print("  [INFO] Production build folder 'dist' not found. Starting compilation...")
@@ -1509,13 +3529,838 @@ def cmd_deploy(args):
     print("  =======================================================")
 
 
+
+def cmd_doctor(args):
+    """Diagnose PyReact environment and show potential issues."""
+    print(BANNER)
+    print("  PyReact Environment Doctor\n")
+    print("  =======================================================")
+
+    run_fix = "--fix" in args
+    if run_fix:
+        print("  Attempting to fix issues automatically...\n")
+        # Fix missing files
+        is_project = any(Path(".").glob("*.pyreact"))
+        if is_project:
+            agents_file = Path("AGENTS.md")
+            cookbook_file = Path("COOKBOOK.md")
+            cursor_file = Path(".cursorrules")
+            
+            if not agents_file.exists():
+                agents_file.write_text(_generate_agents_md(), encoding="utf-8")
+                print("  [FIX] Created AGENTS.md")
+            else:
+                # Always overwrite to ensure it's up to date
+                agents_file.write_text(_generate_agents_md(), encoding="utf-8")
+                print("  [FIX] Updated AGENTS.md")
+                
+            if not cookbook_file.exists():
+                cookbook_file.write_text(_generate_cookbook_md(), encoding="utf-8")
+                print("  [FIX] Created COOKBOOK.md")
+            else:
+                # Always overwrite to ensure it's up to date
+                cookbook_file.write_text(_generate_cookbook_md(), encoding="utf-8")
+                print("  [FIX] Updated COOKBOOK.md")
+                
+            if not cursor_file.exists():
+                cursor_file.write_text(_generate_cursorrules(), encoding="utf-8")
+                print("  [FIX] Created .cursorrules")
+            else:
+                cursor_file.write_text(_generate_cursorrules(), encoding="utf-8")
+                print("  [FIX] Updated .cursorrules")
+        else:
+            print("  [WARN] Not in a PyReact project (no .pyreact files found). Skipping file creation.")
+        print("\n  Fixing complete. Re-running diagnostics:\n")
+
+    issues = []
+    checks_passed = 0
+    total_checks = 0
+
+    # 1. Python version
+    total_checks += 1
+    py_ver = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
+    if sys.version_info >= (3, 11):
+        print(f"  [OK]   Python {py_ver} (>= 3.11)")
+        checks_passed += 1
+    else:
+        print(f"  [FAIL] Python {py_ver} (< 3.11 required)")
+        issues.append("Upgrade Python to 3.11 or later")
+
+    # 2. Node.js & npm
+    total_checks += 1
+    try:
+        node_ver = subprocess.run(["node", "--version"], capture_output=True, text=True,
+                                  shell=(sys.platform == "win32")).stdout.strip()
+        print(f"  [OK]   Node.js {node_ver}")
+        checks_passed += 1
+    except FileNotFoundError:
+        print("  [FAIL] Node.js not found. Install from https://nodejs.org")
+        issues.append("Install Node.js for frontend compilation")
+
+    total_checks += 1
+    try:
+        npm_ver = subprocess.run(["npm", "--version"], capture_output=True, text=True,
+                                 shell=(sys.platform == "win32")).stdout.strip()
+        print(f"  [OK]   npm {npm_ver}")
+        checks_passed += 1
+    except FileNotFoundError:
+        print("  [FAIL] npm not found")
+        issues.append("Install npm (comes with Node.js)")
+
+    # 3. Flask & dependencies
+    total_checks += 1
+    try:
+        import flask
+        print(f"  [OK]   Flask {flask.__version__}")
+        checks_passed += 1
+    except ImportError:
+        print("  [FAIL] Flask not installed")
+        issues.append("Run: pip install flask flask-cors")
+
+    total_checks += 1
+    try:
+        import flask_cors
+        print(f"  [OK]   flask-cors installed")
+        checks_passed += 1
+    except ImportError:
+        print("  [FAIL] flask-cors not installed")
+        issues.append("Run: pip install flask-cors")
+
+    # 4. Ollama (optional)
+    total_checks += 1
+    try:
+        import urllib.request
+        import json
+        req = urllib.request.Request("http://localhost:11434/api/tags")
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            models = [m["name"] for m in data.get("models", [])]
+            print(f"  [OK]   Ollama running ({len(models)} model(s): {', '.join(models[:3])})")
+            checks_passed += 1
+    except Exception:
+        print("  [WARN] Ollama not running (optional - needed for --heal AI self-healing)")
+        checks_passed += 1
+
+    # 5. Port availability
+    import socket
+    for port in [5000, 5173]:
+        total_checks += 1
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            s.bind(("127.0.0.1", port))
+            s.close()
+            print(f"  [OK]   Port {port} available")
+            checks_passed += 1
+        except socket.error:
+            print(f"  [WARN] Port {port} already in use (stop existing processes if needed)")
+            checks_passed += 1
+
+    # 6. PyReact version
+    try:
+        from importlib.metadata import version as pkg_version
+        ver = pkg_version("pyreact-web")
+        print(f"  [INFO] PyReact v{ver}")
+    except Exception:
+        print(f"  [INFO] PyReact v0.1.2 (dev)")
+
+    # 7. Check for project context files
+    is_project = any(Path(".").glob("*.pyreact"))
+    if is_project:
+        total_checks += 1
+        agents_file = Path("AGENTS.md")
+        cookbook_file = Path("COOKBOOK.md")
+        cursor_file = Path(".cursorrules")
+        
+        missing_contexts = []
+        if not agents_file.exists():
+            missing_contexts.append("AGENTS.md")
+        if not cookbook_file.exists():
+            missing_contexts.append("COOKBOOK.md")
+        if not cursor_file.exists():
+            missing_contexts.append(".cursorrules")
+            
+        if not missing_contexts:
+            print("  [OK]   AI context files are present (AGENTS.md, COOKBOOK.md, .cursorrules)")
+            checks_passed += 1
+        else:
+            print(f"  [WARN] Missing AI context files: {', '.join(missing_contexts)}")
+            print("         AI assistant might write incorrect code syntax.")
+            issues.append("Generate or update missing context files by running `pyreact doctor --fix`")
+
+    # Summary
+    print("  =======================================================")
+    if issues:
+        print(f"  {len(issues)} issue(s) found:")
+        for i, issue in enumerate(issues, 1):
+            print(f"    {i}. {issue}")
+    else:
+        print(f"  All checks passed! ({checks_passed}/{total_checks})")
+    print()
+
+
+def cmd_explain(args):
+    """Analyze and explain a PyReact project file architecture."""
+    entry = "app.pyreact"
+    if args and not args[0].startswith("-"):
+        entry = args[0]
+        
+    entry_path = Path(entry)
+    if not entry_path.exists():
+        print(f"  X  File not found: {entry}")
+        sys.exit(1)
+        
+    print(BANNER)
+    print(f"  Analyzing {entry}...\n")
+    
+    try:
+        source = entry_path.read_text(encoding="utf-8")
+        from pyreact.compiler.lexer import Lexer
+        from pyreact.compiler.parser import Parser
+        
+        tokens = Lexer(source).tokenize()
+        ast = Parser(tokens).parse()
+    except Exception as pe:
+        from pyreact.compiler.parser import ParseError
+        from pyreact.compiler.lexer import LexerError
+        if isinstance(pe, (ParseError, LexerError)):
+            from pyreact.compiler.errors import format_compilation_error
+            err_line = getattr(pe, "line", 1)
+            err_col  = getattr(pe, "col", 1)
+            suggestion = getattr(pe, "suggestion", "")
+            err_msg = str(pe)
+            formatted = format_compilation_error(err_msg, err_line, err_col, source, suggestion)
+            print(formatted)
+        else:
+            print(f"  X  Parser Error: {pe}")
+        sys.exit(1)
+        
+    print(f"  {entry} Analysis:")
+    
+    # 1. Server Block
+    if ast.server:
+        funcs = ast.server.functions
+        func_names = [f.name for f in funcs]
+        if funcs:
+            print(f"    [OK] server block    -> {len(funcs)} functions: {', '.join(func_names)}")
+        else:
+            print(f"    [OK] server block    -> defined (empty)")
+    else:
+        print(f"    [-]  server block    -> not defined")
+        
+    # 2. Components
+    if ast.components:
+        for comp in ast.components:
+            states = [s.name for s in comp.states]
+            handlers = [h.name for h in comp.handlers]
+            
+            # Find server.xxx calls inside handlers
+            import re
+            server_calls = []
+            for handler in comp.handlers:
+                calls = re.findall(r'server\.(\w+)\s*\(', handler.body)
+                for c in calls:
+                    if c not in server_calls:
+                        server_calls.append(c)
+                        
+            states_str = f"State: [{', '.join(states)}]" if states else "No local state"
+            calls_str = f", Server Calls: [{', '.join(server_calls)}]" if server_calls else ""
+            print(f"    [OK] component {comp.name:<5} -> {states_str}{calls_str}")
+    else:
+        print(f"    [-]  components      -> no components found")
+        
+    # 3. Database
+    if ast.database:
+        print(f"    [OK] database block  -> Provider: {ast.database.provider}, URL: {ast.database.url}")
+    else:
+        print(f"    [-]  database block  -> not defined")
+        
+    # 4. Pages/Routing
+    if ast.pages:
+        routes_desc = []
+        for name, route_expr in ast.pages.routes.items():
+            desc = route_expr.strip()
+            routes_desc.append(f"{name}: {desc}")
+        print(f"    [OK] pages block     -> Routes: {', '.join(routes_desc)}")
+    else:
+        print(f"    [-]  pages block     -> not defined (routing disabled)")
+        
+    # 5. Shared State
+    if ast.shared_state:
+        vars_list = list(ast.shared_state.variables.keys())
+        print(f"    [OK] shared_state    -> Variables: {', '.join(vars_list)}")
+    else:
+        print(f"    [-]  shared_state    -> not defined")
+        
+    # 6. Style
+    if ast.style:
+        style_vars = [f"{k}={v}" for k, v in ast.style.variables.items()]
+        print(f"    [OK] style block     -> {', '.join(style_vars)}")
+    else:
+        print(f"    [-]  style block     -> not defined")
+        
+    # 7. Realtime, GraphQL, RBAC, WebRTC
+    if ast.realtime:
+        print(f"    [OK] realtime block  -> Provider: {ast.realtime.provider}, Channels: {ast.realtime.channels}")
+    if ast.graphql:
+        print(f"    [OK] graphql block   -> Types: {list(ast.graphql.types.keys())}, Queries: {list(ast.graphql.queries.keys())}")
+    if ast.rbac:
+        print(f"    [OK] rbac block      -> Roles: {ast.rbac.roles}, Default: {ast.rbac.default_role}")
+    if ast.webrtc:
+        print(f"    [OK] webrtc block    -> Codecs: {ast.webrtc.codecs}")
+        
+    # Display endpoints detail
+    if ast.server and ast.server.functions:
+        print("\n  API Endpoints Generated:")
+        for func in ast.server.functions:
+            params_str = []
+            for p in func.params:
+                p_type = func.param_types.get(p)
+                if p_type:
+                    params_str.append(f"{p}: {p_type}")
+                else:
+                    params_str.append(p)
+            params_formatted = ", ".join(params_str)
+            ret_type = f" -> {func.return_type}" if func.return_type else ""
+            print(f"    POST /api/{func.name:<13} -> def {func.name}({params_formatted}){ret_type}")
+            
+    print(f"\n  Output Targets: dist/backend/ + dist/frontend/\n")
+
+
+def cmd_env(args):
+    """Manage and check PyReact environment variables."""
+    if not args or args[0] != "check":
+        print("  Usage: pyreact env check")
+        return
+    
+    print("\n  === PyReact Environment Variables Check ===")
+    env_file = Path(".env.pyreact")
+    if not env_file.exists():
+        print("    [!] Warning: .env.pyreact file not found in root directory.")
+        print("        Create one to define environment variables.")
+        return
+
+    lines = env_file.read_text(encoding="utf-8", errors="replace").splitlines()
+    defined_vars = {}
+    invalid_keys = []
+    for line_no, line in enumerate(lines, 1):
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "=" in line:
+            key, val = line.split("=", 1)
+            key = key.strip()
+            # Check formatting
+            if not (key.startswith("SERVER_") or key.startswith("PUBLIC_")):
+                invalid_keys.append((line_no, key, "Must start with SERVER_ or PUBLIC_"))
+            elif not key.isupper():
+                invalid_keys.append((line_no, key, "Must be all UPPERCASE"))
+            defined_vars[key] = val.strip()
+
+    # Find entry file
+    entry = "app.pyreact"
+    if not Path(entry).exists():
+        pyreact_files = list(Path(".").glob("*.pyreact"))
+        if pyreact_files:
+            entry = str(pyreact_files[0])
+        else:
+            entry = None
+
+    used_vars = set()
+    if entry and Path(entry).exists():
+        content = Path(entry).read_text(encoding="utf-8", errors="replace")
+        import re
+        for m in re.finditer(r'\b(SERVER_[A-Z0-9_]+|PUBLIC_[A-Z0-9_]+)\b', content):
+            used_vars.add(m.group(1))
+
+    # Report invalid keys
+    if invalid_keys:
+        print("\n  [X] Invalid Keys Found in .env.pyreact:")
+        for line_no, key, err in invalid_keys:
+            print(f"      Line {line_no:02d}: '{key}' -> {err}")
+    else:
+        print("    [OK] All keys in .env.pyreact are validly formatted.")
+
+    # Report missing but used keys
+    missing_keys = used_vars - set(defined_vars.keys())
+    if missing_keys:
+        print("\n  [!] Warning: Referenced environment variables missing from .env.pyreact:")
+        for k in missing_keys:
+            print(f"      - {k}")
+    else:
+        print("    [OK] All referenced environment variables are defined in .env.pyreact.")
+
+    # Summary of defined vars
+    print(f"\n  Summary: {len(defined_vars)} defined vars, {len(used_vars)} referenced vars.")
+    print()
+
+
+def cmd_db(args):
+    """Manage database migrations in PyReact."""
+    if not args or args[0] not in ("migrate", "status", "rollback"):
+        print("  Usage: pyreact db [migrate | status | rollback]")
+        return
+
+    sub = args[0]
+    
+    # Locate entry file to get AST
+    entry = "app.pyreact"
+    if not Path(entry).exists():
+        pyreact_files = list(Path(".").glob("*.pyreact"))
+        if pyreact_files:
+            entry = str(pyreact_files[0])
+        else:
+            print("  X  No PyReact entry file found.")
+            sys.exit(1)
+
+    # Parse project
+    from pyreact.compiler.lexer import Lexer
+    from pyreact.compiler.parser import Parser
+    import re
+    import json
+    import time
+    
+    try:
+        source = Path(entry).read_text(encoding="utf-8")
+        lexer = Lexer(source)
+        tokens = lexer.tokenize()
+        parser = Parser(tokens)
+        ast = parser.parse()
+    except Exception as e:
+        print(f"  X  Parser Error: {e}")
+        sys.exit(1)
+
+    if not ast.database:
+        print("  X  No database block configured in app.pyreact.")
+        sys.exit(1)
+
+    db_block = ast.database
+    migrations_dir = Path("migrations")
+    migrations_dir.mkdir(exist_ok=True)
+    state_file = Path(".pyreact_db_state.json")
+
+    # Load migration state
+    if state_file.exists():
+        try:
+            state = json.loads(state_file.read_text(encoding="utf-8"))
+        except Exception:
+            state = {"migrations": []}
+    else:
+        state = {"migrations": []}
+
+    # Extract database models from server block
+    models = []
+    if ast.server:
+        # We scan raw python server block content for model classes
+        server_match = re.search(r'server\s*\{([^}]+)\}', source, re.DOTALL)
+        if server_match:
+            server_body = server_match.group(1)
+            # Find classes like: class DbTask(db.Model):
+            for cls_match in re.finditer(r'class\s+(\w+)\s*\(\s*db\.Model\s*\)\s*:', server_body):
+                model_name = cls_match.group(1)
+                # find next class or end of block or dedent
+                start_pos = cls_match.end()
+                class_body = server_body[start_pos:]
+                columns = []
+                for col_match in re.finditer(r'^\s+(\w+)\s*=\s*db\.Column\(([^)]+)\)', class_body, re.MULTILINE):
+                    col_name = col_match.group(1)
+                    col_type = col_match.group(2).strip()
+                    columns.append((col_name, col_type))
+                models.append({"name": model_name, "columns": columns})
+
+    if sub == "migrate":
+        print(f"\n  [db] Running migration for provider '{db_block.provider}'...")
+        timestamp = int(time.time())
+        m_name = f"migration_{timestamp}"
+        
+        # Generate SQL migration DDL
+        sql_lines = []
+        sql_lines.append(f"-- PyReact Migration: {m_name}")
+        sql_lines.append(f"-- Generated: {time.strftime('%Y-%m-%d %H:%M:%S')}")
+        sql_lines.append(f"-- Provider: {db_block.provider}\n")
+        
+        for m in models:
+            sql_lines.append(f"CREATE TABLE IF NOT EXISTS {m['name'].lower()} (")
+            col_defs = []
+            for col_name, col_type in m['columns']:
+                sql_type = "TEXT"
+                if "Integer" in col_type:
+                    sql_type = "INTEGER"
+                elif "String" in col_type:
+                    len_match = re.search(r'\d+', col_type)
+                    length = len_match.group(0) if len_match else "255"
+                    sql_type = f"VARCHAR({length})"
+                elif "Boolean" in col_type:
+                    sql_type = "BOOLEAN"
+                
+                extra = ""
+                if "primary_key=True" in col_type:
+                    extra = " PRIMARY KEY AUTOINCREMENT" if db_block.provider == "sqlite" else " PRIMARY KEY"
+                elif "nullable=False" in col_type:
+                    extra = " NOT NULL"
+                
+                col_defs.append(f"    {col_name} {sql_type}{extra}")
+            sql_lines.append(",\n".join(col_defs))
+            sql_lines.append(");\n")
+            
+        sql_content = "\n".join(sql_lines)
+        migrate_file = migrations_dir / f"{m_name}_migrate.sql"
+        migrate_file.write_text(sql_content, encoding="utf-8")
+        
+        # Generate rollback
+        rollback_lines = []
+        rollback_lines.append(f"-- PyReact Rollback: {m_name}")
+        rollback_lines.append(f"-- Provider: {db_block.provider}\n")
+        for m in reversed(models):
+            rollback_lines.append(f"DROP TABLE IF EXISTS {m['name'].lower()};")
+        rollback_content = "\n".join(rollback_lines)
+        rollback_file = migrations_dir / f"{m_name}_rollback.sql"
+        rollback_file.write_text(rollback_content, encoding="utf-8")
+
+        # Actually apply to local sqlite db if present
+        if db_block.provider == "sqlite":
+            db_path = db_block.url
+            import sqlite3
+            try:
+                conn = sqlite3.connect(db_path)
+                cursor = conn.cursor()
+                for statement in sql_content.split(";"):
+                    if statement.strip():
+                        cursor.execute(statement)
+                conn.commit()
+                conn.close()
+                print(f"  [SUCCESS] Applied DDL changes to SQLite database at '{db_path}'.")
+            except Exception as dberr:
+                print(f"  [WARN] Could not apply SQL directly to '{db_path}': {dberr}")
+        
+        # Save to state
+        state["migrations"].append({
+            "name": m_name,
+            "applied_at": time.strftime('%Y-%m-%d %H:%M:%S'),
+            "status": "applied",
+            "models_count": len(models)
+        })
+        state_file.write_text(json.dumps(state, indent=2), encoding="utf-8")
+        
+        print(f"  [SUCCESS] Generated migration file: {migrate_file}")
+        print(f"  [SUCCESS] Generated rollback file: {rollback_file}")
+        print()
+        
+    elif sub == "status":
+        print("\n  === PyReact Database Migration Status ===")
+        print(f"    Provider: {db_block.provider}")
+        print(f"    URL:      {db_block.url}\n")
+        
+        if not state["migrations"]:
+            print("    No migrations have been applied yet.")
+            print("    Run: `pyreact db migrate` to create and apply first migration.")
+        else:
+            print(f"    {'Migration Name':<25} {'Applied At':<20} {'Status':<12}")
+            print(f"    {'-'*25} {'-'*20} {'-'*12}")
+            for m in state["migrations"]:
+                print(f"    {m['name']:<25} {m['applied_at']:<20} {m['status']:<12}")
+        print()
+        
+    elif sub == "rollback":
+        applied = [m for m in state["migrations"] if m["status"] == "applied"]
+        if not applied:
+            print("  [WARN] No applied migrations to rollback.")
+            return
+        
+        last_m = applied[-1]
+        print(f"\n  [db] Rolling back migration '{last_m['name']}'...")
+        rollback_file = migrations_dir / f"{last_m['name']}_rollback.sql"
+        
+        if rollback_file.exists():
+            rollback_sql = rollback_file.read_text(encoding="utf-8")
+            if db_block.provider == "sqlite":
+                db_path = db_block.url
+                import sqlite3
+                try:
+                    conn = sqlite3.connect(db_path)
+                    cursor = conn.cursor()
+                    for statement in rollback_sql.split(";"):
+                        if statement.strip():
+                            cursor.execute(statement)
+                    conn.commit()
+                    conn.close()
+                    print(f"  [SUCCESS] Executed rollback DDL on SQLite database '{db_path}'.")
+                except Exception as dberr:
+                    print(f"  [WARN] Could not execute rollback SQL on '{db_path}': {dberr}")
+        
+        # Mark as rolled back in state
+        for m in state["migrations"]:
+            if m["name"] == last_m["name"]:
+                m["status"] = "rolled_back"
+                break
+        state_file.write_text(json.dumps(state, indent=2), encoding="utf-8")
+        print(f"  [SUCCESS] Migration '{last_m['name']}' rolled back successfully.")
+        print()
+
+
+def cmd_convert(args):
+    """Convert a React JSX/TSX file or component into PyReact syntax."""
+    import re as _re
+    if not args:
+        print("  X  Usage: pyreact convert <file.jsx|file.tsx>")
+        print("  ->  Example: pyreact convert src/MyComponent.jsx")
+        sys.exit(1)
+
+    src_file = Path(args[0])
+    if not src_file.exists():
+        print(f"  X  File not found: {src_file}")
+        sys.exit(1)
+
+    source = src_file.read_text(encoding="utf-8", errors="replace")
+    print(f"\n  [convert] Mengonversi {src_file} ke PyReact syntax...\n")
+
+    out = source
+
+    # 1. useState → use_state
+    out = _re.sub(
+        r'const\s+\[([\w]+),\s*([\w]+)\]\s*=\s*useState\(([^)]+)\)',
+        lambda m: f"{m.group(1)}, {m.group(2)} = use_state({m.group(3).replace('null','None').replace('true','True').replace('false','False')})",
+        out
+    )
+
+    # 2. useEffect → use_effect
+    out = _re.sub(
+        r'useEffect\s*\(\s*\(\s*\)\s*=>\s*\{',
+        'use_effect(def():',
+        out
+    )
+    out = _re.sub(r'useEffect\s*\(', 'use_effect(def(): ', out)
+
+    # 3. useRef → use_ref
+    out = _re.sub(
+        r'const\s+(\w+)\s*=\s*useRef\(([^)]*)\)',
+        lambda m: f"{m.group(1)} = use_ref({m.group(2).replace('null','None')})",
+        out
+    )
+
+    # 4. useMemo → use_memo
+    out = _re.sub(r'useMemo\(', 'use_memo(', out)
+
+    # 5. useCallback → use_callback
+    out = _re.sub(r'useCallback\(', 'use_callback(', out)
+
+    # 6. useReducer → use_reducer
+    out = _re.sub(
+        r'const\s+\[(\w+),\s*(\w+)\]\s*=\s*useReducer\(([^,]+),([^)]+)\)',
+        lambda m: f"{m.group(1)}, {m.group(2)} = use_reducer({m.group(3).strip()}, {m.group(4).strip()})",
+        out
+    )
+
+    # 7. fetch() → server.*()
+    out = _re.sub(
+        r"fetch\(['\"/]+api/([\w_]+)['\"]\s*,?[^)]*\)",
+        lambda m: f"server.{m.group(1)}()",
+        out
+    )
+
+    # 8. export default function Name() { → component Name():
+    out = _re.sub(
+        r'export\s+default\s+function\s+(\w+)\s*\([^)]*\)\s*\{',
+        lambda m: f"component {m.group(1)}():",
+        out
+    )
+
+    # 9. function Name() { (standalone component) → component Name():
+    out = _re.sub(
+        r'^function\s+([A-Z]\w*)\s*\([^)]*\)\s*\{',
+        lambda m: f"component {m.group(1)}():",
+        out, flags=_re.MULTILINE
+    )
+
+    # 10. null/true/false → None/True/False  (outside JSX attributes)
+    out = _re.sub(r'\bnull\b', 'None', out)
+    out = _re.sub(r'\btrue\b', 'True', out)
+    out = _re.sub(r'\bfalse\b', 'False', out)
+
+    # 11. Remove React imports
+    out = _re.sub(r"import\s+React[^;\n]*[;\n]", "", out)
+    out = _re.sub(r"import\s+\{[^}]*\}\s+from\s+['\"]react['\"][;\n]", "", out)
+
+    # 12. className stays as className (already correct)
+
+    # Determine output filename
+    out_stem = src_file.stem
+    out_file = src_file.with_name(out_stem + ".pyreact")
+    if "--out" in args:
+        out_idx = args.index("--out")
+        if out_idx + 1 < len(args):
+            out_file = Path(args[out_idx + 1])
+
+    out_file.write_text(out, encoding="utf-8")
+
+    print(f"  OK  Konversi selesai → {out_file}")
+    print("")
+    print("  [PERINGATAN] Periksa file hasil konversi secara manual:")
+    print("  - Pastikan semua handler function menggunakan format `def handleX():`")
+    print("  - Ganti sisa pola `async/await` secara manual jika masih ada")
+    print("  - Jalankan `pyreact compile` untuk memverifikasi sintaks")
+    print(f"  -> pyreact compile {out_file}\n")
+
+
+def cmd_lint(args):
+    """Lint .pyreact files for anti-patterns and style issues."""
+    import re as _re
+
+    # Parse arguments
+    paths = [a for a in args if not a.startswith('--')]
+    fix_mode = '--fix' in args
+    strict = '--strict' in args
+
+    if not paths:
+        # Default: lint all .pyreact files in current directory
+        paths = list(Path('.').rglob('*.pyreact'))
+        if not paths:
+            print("  [lint] Tidak ada file .pyreact ditemukan.")
+            return
+
+    RULES = [
+        # (pattern, message, severity, code)
+        (r'\buseState\s*\(', "Gunakan `use_state()` bukan `useState()`", "error", "E001"),
+        (r'\buseEffect\s*\(', "Gunakan `use_effect()` bukan `useEffect()`", "error", "E002"),
+        (r'\buseRef\s*\(', "Gunakan `use_ref()` bukan `useRef()`", "error", "E003"),
+        (r'\buseMemo\s*\(', "Gunakan `use_memo()` bukan `useMemo()`", "error", "E004"),
+        (r'\buseCallback\s*\(', "Gunakan `use_callback()` bukan `useCallback()`", "error", "E005"),
+        (r'\buseReducer\s*\(', "Gunakan `use_reducer()` bukan `useReducer()`", "error", "E006"),
+        (r'\bfetch\s*\(', "Gunakan `server.func()` bukan `fetch()`", "error", "E007"),
+        (r'\baxios\b', "Gunakan `server.func()` bukan `axios`", "error", "E008"),
+        (r'export\s+default\s+function', "Gunakan `component Name():` bukan `export default function`", "error", "E009"),
+        (r'import\s+React\b', "`import React` tidak diperlukan di PyReact", "warning", "W001"),
+        (r'import\s+\{[^}]+\}\s+from\s+["\']react["\']', "`import from react` tidak diperlukan di PyReact", "warning", "W002"),
+        (r'\bnull\b', "Gunakan `None` bukan `null`", "warning" if not strict else "error", "W003"),
+        (r'(?<![=><!])\btrue\b', "Gunakan `True` bukan `true`", "warning" if not strict else "error", "W004"),
+        (r'(?<![=><!])\bfalse\b', "Gunakan `False` bukan `false`", "warning" if not strict else "error", "W005"),
+        (r'^component\s+[a-z]', "Nama komponen harus diawali huruf kapital (PascalCase)", "error", "E010"),
+    ]
+
+    total_errors = 0
+    total_warnings = 0
+    total_files = 0
+
+    for path in paths:
+        path = Path(path)
+        if not path.exists() or not str(path).endswith('.pyreact'):
+            continue
+
+        source = path.read_text(encoding='utf-8', errors='replace')
+        file_issues = []
+
+        for line_no, line_text in enumerate(source.splitlines(), start=1):
+            # Skip comment lines
+            stripped = line_text.strip()
+            if stripped.startswith('#'):
+                continue
+            for pattern, message, severity, code in RULES:
+                if _re.search(pattern, line_text, _re.MULTILINE):
+                    file_issues.append((line_no, severity, code, message, line_text.rstrip()))
+                    if severity == 'error':
+                        total_errors += 1
+                    else:
+                        total_warnings += 1
+                    break  # one issue per line
+
+        if file_issues:
+            total_files += 1
+            print(f"\n  {path}")
+            for line_no, severity, code, message, line_text in file_issues:
+                icon = "X" if severity == 'error' else "!"
+                print(f"    [{icon}] L{line_no:4d}  [{code}]  {message}")
+                if '--show-source' in args:
+                    print(f"           {line_text}")
+
+    print()
+    if total_errors == 0 and total_warnings == 0:
+        print("  OK  Tidak ada masalah ditemukan!")
+    else:
+        print(f"  Ditemukan {total_errors} error, {total_warnings} warning di {total_files} file")
+        if total_errors > 0:
+            print("  -> Jalankan `pyreact convert <file>` untuk konversi otomatis")
+            sys.exit(1)
+
+
+def cmd_format(args):
+    """Format .pyreact files to canonical style."""
+    import re as _re
+
+    paths = [a for a in args if not a.startswith('--')]
+    check_mode = '--check' in args
+    dry_run = '--dry-run' in args or check_mode
+
+    if not paths:
+        paths = list(Path('.').rglob('*.pyreact'))
+        if not paths:
+            print("  [format] Tidak ada file .pyreact ditemukan.")
+            return
+
+    changed_files = []
+
+    for path in paths:
+        path = Path(path)
+        if not path.exists() or not str(path).endswith('.pyreact'):
+            continue
+
+        original = path.read_text(encoding='utf-8', errors='replace')
+        formatted = original
+
+        # Rule 1: Normalize block spacing — blank line before top-level blocks
+        TOP_BLOCKS = ['server', 'component', 'style', 'pages', 'database',
+                      'shared_state', 'dependencies', 'realtime', 'middleware', 'hook']
+        for block in TOP_BLOCKS:
+            # Ensure blank line before each block keyword at line start
+            formatted = _re.sub(
+                r'(\S)\n(' + block + r'\s)',
+                r'\1\n\n\2',
+                formatted
+            )
+
+        # Rule 2: Normalize trailing whitespace on each line
+        formatted = '\n'.join(line.rstrip() for line in formatted.splitlines())
+
+        # Rule 3: Ensure file ends with a single newline
+        formatted = formatted.rstrip('\n') + '\n'
+
+        # Rule 4: Normalize multiple consecutive blank lines to max 2
+        formatted = _re.sub(r'\n{4,}', '\n\n\n', formatted)
+
+        # Rule 5: Sort style block tokens alphabetically
+        style_match = _re.search(r'(style\s*\{)([^}]+)(\})', formatted, _re.DOTALL)
+        if style_match:
+            style_body = style_match.group(2)
+            style_lines = [l for l in style_body.splitlines() if l.strip()]
+            style_lines.sort(key=lambda l: l.strip().split('=')[0].strip())
+            new_style_body = '\n' + '\n'.join(style_lines) + '\n'
+            formatted = formatted[:style_match.start(2)] + new_style_body + formatted[style_match.end(2):]
+
+        if formatted == original:
+            continue
+
+        changed_files.append(str(path))
+
+        if not dry_run:
+            path.write_text(formatted, encoding='utf-8')
+            print(f"  OK  Formatted: {path}")
+        else:
+            print(f"  --  Would format: {path}")
+
+    if check_mode and changed_files:
+        print(f"\n  X  {len(changed_files)} file perlu diformat. Jalankan `pyreact format` untuk memperbaiki.")
+        sys.exit(1)
+    elif not changed_files:
+        print("  OK  Semua file sudah terformat dengan benar.")
+
+
 COMMANDS = {
     "new":      cmd_new,
+    "init":     cmd_init,
     "build":    cmd_build,
     "dev":      cmd_dev,
     "serve":    cmd_serve,
     "generate": cmd_generate,
     "compile":  cmd_compile,
+    "explain":  cmd_explain,
     "ai":       cmd_ai,
     "install":  cmd_install,
     "publish":  cmd_publish,
@@ -1525,6 +4370,12 @@ COMMANDS = {
     "deploy":   cmd_deploy,
     "secrets":  cmd_secrets,
     "domain":   cmd_domain,
+    "doctor":   cmd_doctor,
+    "convert":  cmd_convert,
+    "lint":     cmd_lint,
+    "format":   cmd_format,
+    "db":       cmd_db,
+    "env":      cmd_env,
 }
 
 
@@ -1536,6 +4387,7 @@ def main():
         print("  Commands:")
         print("    new <name>                    Create a new PyReact project")
         print("    new <name> --template <name>  Create from Hub Template")
+        print("    init                          Interactive project initializer wizard")
         print("    dev                           Start dev servers (Flask + Vite)")
         print("    dev --heal                    Dev mode + AI self-healing on error")
         print("    build                         Build for production")
@@ -1543,6 +4395,7 @@ def main():
         print("    compile [file] --heal         Compile + AI auto-heal on error")
         print("    serve                         Serve production build")
         print("    generate component <N>        Scaffold a new component")
+        print("    explain [file]                Analyze and explain .pyreact architecture")
         print("    ai <prompt>                   Generate code with local AI assistant (free)")
         print("    install <package>             Install package from PPR Registry")
         print("    publish <file>                Publish package to PPR Registry")
@@ -1550,8 +4403,13 @@ def main():
         print("    hub                           List all templates in Hub Marketplace")
         print("    test                          Run unified backend + frontend test suite")
         print("    deploy                        Deploy production bundle to PyReact Cloud")
+        print("    deploy --platform <name>      Generate deployment configurations (vercel|fly|railway|render|digitalocean)")
+        print("    db [migrate|status|rollback]  Manage database migrations")
+        print("    env check                     Validate project environment variables")
         print("    secrets [list|set|remove]     Manage cloud environment secrets")
         print("    domain [list|add|remove]      Manage custom domains mappings")
+        print("    doctor                        Diagnose environment issues")
+        print("    convert <file.jsx>            Convert React JSX/TSX file to PyReact syntax")
         print()
         print("  Self-Healing Options (dengan --heal):")
         print("    --model <nama>    Pilih model Ollama (default: auto-detect)")

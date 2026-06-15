@@ -48,8 +48,25 @@ pydantic>=2.0.0
 VITE_CONFIG = """\
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+
+// PyReact HMR Plugin — watches for .pyreact-hmr-trigger file changes
+function pyreactHMR() {
+  return {
+    name: "pyreact-hmr",
+    configureServer(server) {
+      const triggerFile = ".pyreact-hmr-trigger";
+      server.watcher.add(triggerFile);
+      server.watcher.on("change", (file) => {
+        if (file.endsWith(triggerFile)) {
+          server.ws.send({ type: "full-reload" });
+        }
+      });
+    }
+  };
+}
+
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), pyreactHMR()],
   server: { proxy: { "/api": "http://localhost:5000" } },
 });
 """
@@ -827,7 +844,440 @@ export const UI = {
       </div>
     );
   },
+  // ── UI Library v2 — New Components ────────────────────────────────────────
+  Skeleton: ({ width = "100%", height = "1rem", rounded = "md", className = "" }) => {
+    const r = { none: "rounded-none", sm: "rounded-sm", md: "rounded-md", lg: "rounded-lg", full: "rounded-full" };
+    return (
+      <div
+        className={`animate-pulse bg-white/5 border border-white/5 ${r[rounded] || r.md} ${className}`}
+        style={{ width, height }}
+        aria-label="Loading..."
+        role="status"
+      />
+    );
+  },
+  SkeletonCard: ({ lines = 3, showAvatar = false }) => (
+    <div className="border border-white/10 rounded-2xl p-5 bg-gray-900/50 space-y-3">
+      {showAvatar && (
+        <div className="flex items-center gap-3">
+          <div className="animate-pulse w-10 h-10 rounded-full bg-white/5 border border-white/5" />
+          <div className="flex-1 space-y-2">
+            <div className="animate-pulse h-3 bg-white/5 rounded-md w-2/3" />
+            <div className="animate-pulse h-2 bg-white/5 rounded-md w-1/3" />
+          </div>
+        </div>
+      )}
+      {Array.from({ length: lines }).map((_, i) => (
+        <div key={i} className={`animate-pulse h-3 bg-white/5 rounded-md ${i === lines - 1 ? "w-3/4" : "w-full"}`} />
+      ))}
+    </div>
+  ),
+  CodeBlock: ({ code = "", language = "python", title = "", showCopy = true }) => {
+    const [copied, setCopied] = React.useState(false);
+    const copy = () => {
+      navigator.clipboard.writeText(code).then(() => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      });
+    };
+    const langColors = { python: "text-blue-400", javascript: "text-yellow-400", jsx: "text-cyan-400", bash: "text-green-400", json: "text-orange-400" };
+    return (
+      <div className="rounded-2xl overflow-hidden border border-white/10 bg-gray-950 shadow-xl">
+        <div className="flex items-center justify-between px-4 py-2 bg-gray-900/80 border-b border-white/10">
+          <span className="flex items-center gap-2">
+            <span className={`text-xs font-semibold ${langColors[language] || "text-gray-400"}`}>{language}</span>
+            {title && <span className="text-xs text-gray-500">{title}</span>}
+          </span>
+          {showCopy && (
+            <button
+              onClick={copy}
+              className="flex items-center gap-1.5 text-xs text-gray-400 hover:text-white transition px-2 py-1 rounded-lg hover:bg-white/5"
+            >
+              {copied ? (
+                <><svg className="w-3.5 h-3.5 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg><span className="text-green-400">Copied!</span></>
+              ) : (
+                <><svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2" /></svg><span>Copy</span></>
+              )}
+            </button>
+          )}
+        </div>
+        <pre className="overflow-x-auto p-4 text-sm text-gray-300 leading-relaxed font-mono whitespace-pre">
+          <code>{code}</code>
+        </pre>
+      </div>
+    );
+  },
+  CommandPalette: ({ commands = [], placeholder = "Type a command...", onClose }) => {
+    const [query, setQuery] = React.useState("");
+    const [selectedIdx, setSelectedIdx] = React.useState(0);
+    const inputRef = React.useRef(null);
+    React.useEffect(() => { inputRef.current?.focus(); }, []);
+    const filtered = commands.filter(c =>
+      (c.label || c).toLowerCase().includes(query.toLowerCase())
+    );
+    const handleKey = (e) => {
+      if (e.key === "ArrowDown") { e.preventDefault(); setSelectedIdx(i => Math.min(i + 1, filtered.length - 1)); }
+      else if (e.key === "ArrowUp") { e.preventDefault(); setSelectedIdx(i => Math.max(i - 1, 0)); }
+      else if (e.key === "Enter" && filtered[selectedIdx]) {
+        filtered[selectedIdx].action?.();
+        onClose?.();
+      } else if (e.key === "Escape") { onClose?.(); }
+    };
+    return (
+      <div className="fixed inset-0 z-[9999] flex items-start justify-center pt-[15vh] bg-black/60 backdrop-blur-sm" onClick={onClose}>
+        <div className="w-full max-w-lg bg-gray-900 border border-white/15 rounded-2xl shadow-2xl overflow-hidden" onClick={e => e.stopPropagation()}>
+          <div className="flex items-center gap-3 px-4 py-3 border-b border-white/10">
+            <svg className="w-4 h-4 text-gray-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
+            <input
+              ref={inputRef}
+              value={query}
+              onChange={e => { setQuery(e.target.value); setSelectedIdx(0); }}
+              onKeyDown={handleKey}
+              placeholder={placeholder}
+              className="flex-1 bg-transparent text-white placeholder-gray-500 text-sm focus:outline-none"
+            />
+            <kbd className="text-[10px] text-gray-500 border border-white/10 rounded px-1.5 py-0.5 font-mono">ESC</kbd>
+          </div>
+          <div className="max-h-72 overflow-y-auto py-2">
+            {filtered.length === 0 ? (
+              <div className="text-center text-gray-500 text-sm py-8">No results for "{query}"</div>
+            ) : filtered.map((cmd, idx) => (
+              <button
+                key={idx}
+                onClick={() => { cmd.action?.(); onClose?.(); }}
+                onMouseEnter={() => setSelectedIdx(idx)}
+                className={`w-full flex items-center gap-3 px-4 py-2.5 text-sm transition cursor-pointer ${idx === selectedIdx ? "bg-white/8 text-white" : "text-gray-400 hover:text-white hover:bg-white/5"}`}
+              >
+                {cmd.icon && <span className="text-gray-400 shrink-0">{cmd.icon}</span>}
+                <span className="flex-1 text-left">{cmd.label || cmd}</span>
+                {cmd.shortcut && <kbd className="text-[10px] text-gray-600 border border-white/10 rounded px-1.5 font-mono">{cmd.shortcut}</kbd>}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  },
+  DataTable: ({ columns = [], rows = [], pageSize = 10, searchable = true, sortable = true }) => {
+    const [page, setPage] = React.useState(0);
+    const [search, setSearch] = React.useState("");
+    const [sort, setSort] = React.useState({ col: null, dir: "asc" });
+    let data = rows;
+    if (searchable && search) {
+      data = data.filter(row =>
+        Object.values(row).some(v => String(v).toLowerCase().includes(search.toLowerCase()))
+      );
+    }
+    if (sortable && sort.col) {
+      data = [...data].sort((a, b) => {
+        const va = a[sort.col] ?? "";
+        const vb = b[sort.col] ?? "";
+        return sort.dir === "asc" ? (va < vb ? -1 : va > vb ? 1 : 0) : (va > vb ? -1 : va < vb ? 1 : 0);
+      });
+    }
+    const totalPages = Math.max(1, Math.ceil(data.length / pageSize));
+    const pageData = data.slice(page * pageSize, (page + 1) * pageSize);
+    const toggleSort = (col) => setSort(s => s.col === col ? { col, dir: s.dir === "asc" ? "desc" : "asc" } : { col, dir: "asc" });
+    return (
+      <div className="space-y-3">
+        {searchable && (
+          <div className="flex items-center gap-2 bg-gray-900/60 border border-white/10 rounded-xl px-3 py-2">
+            <svg className="w-4 h-4 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
+            <input value={search} onChange={e => { setSearch(e.target.value); setPage(0); }} placeholder="Search..." className="flex-1 bg-transparent text-sm text-white placeholder-gray-500 focus:outline-none" />
+          </div>
+        )}
+        <div className="w-full overflow-x-auto rounded-xl border border-white/10">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-white/10 bg-gray-900/80">
+                {columns.map(col => (
+                  <th
+                    key={col.key || col}
+                    onClick={() => sortable && toggleSort(col.key || col)}
+                    className={`px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider ${sortable ? "cursor-pointer select-none hover:text-white transition" : ""}`}
+                  >
+                    <span className="flex items-center gap-1">
+                      {col.label || col}
+                      {sortable && sort.col === (col.key || col) && (
+                        <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={sort.dir === "asc" ? "M5 15l7-7 7 7" : "M19 9l-7 7-7-7"} />
+                        </svg>
+                      )}
+                    </span>
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {pageData.length === 0 ? (
+                <tr><td colSpan={columns.length} className="px-4 py-10 text-center text-gray-500">No data found</td></tr>
+              ) : pageData.map((row, idx) => (
+                <tr key={idx} className="border-b border-white/5 hover:bg-white/3 transition">
+                  {columns.map(col => (
+                    <td key={col.key || col} className="px-4 py-3 text-gray-300">
+                      {col.render ? col.render(row[col.key || col], row) : String(row[col.key || col] ?? "")}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        {totalPages > 1 && (
+          <div className="flex items-center justify-between text-sm text-gray-400">
+            <span>Showing {page * pageSize + 1}–{Math.min((page + 1) * pageSize, data.length)} of {data.length}</span>
+            <div className="flex gap-1">
+              <button onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0} className="px-3 py-1 rounded-lg border border-white/10 hover:bg-white/5 disabled:opacity-30 transition">Prev</button>
+              <button onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))} disabled={page >= totalPages - 1} className="px-3 py-1 rounded-lg border border-white/10 hover:bg-white/5 disabled:opacity-30 transition">Next</button>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  },
+  Stepper: ({ steps = [], activeStep = 0, onStepClick }) => (
+    <div className="flex items-center gap-0">
+      {steps.map((step, idx) => (
+        <React.Fragment key={idx}>
+          <button
+            onClick={() => onStepClick?.(idx)}
+            className={`flex flex-col items-center gap-1 min-w-[80px] ${onStepClick ? "cursor-pointer" : "cursor-default"}`}
+          >
+            <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold border-2 transition-all ${
+              idx < activeStep ? "bg-blue-600 border-blue-600 text-white" :
+              idx === activeStep ? "bg-blue-600/20 border-blue-500 text-blue-400" :
+              "bg-transparent border-white/20 text-gray-500"
+            }`}>
+              {idx < activeStep ? (
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>
+              ) : idx + 1}
+            </div>
+            <span className={`text-[10px] font-medium text-center leading-tight ${idx === activeStep ? "text-blue-400" : idx < activeStep ? "text-gray-300" : "text-gray-600"}`}>
+              {step.label || step}
+            </span>
+          </button>
+          {idx < steps.length - 1 && (
+            <div className={`h-0.5 flex-1 mx-1 transition-all ${idx < activeStep ? "bg-blue-600" : "bg-white/10"}`} />
+          )}
+        </React.Fragment>
+      ))}
+    </div>
+  ),
+  Timeline: ({ items = [] }) => (
+    <div className="relative pl-6 space-y-6">
+      <div className="absolute left-2 top-0 bottom-0 w-0.5 bg-white/10" />
+      {items.map((item, idx) => (
+        <div key={idx} className="relative flex gap-4">
+          <div className={`absolute -left-4 w-4 h-4 rounded-full border-2 mt-0.5 ${item.color ? `bg-${item.color}-600 border-${item.color}-600` : "bg-blue-600 border-blue-600"}`} />
+          <div className="flex-1">
+            <div className="flex items-center gap-2 mb-0.5">
+              <span className="text-sm font-semibold text-white">{item.title}</span>
+              {item.badge && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-white/10 text-gray-400 border border-white/10">{item.badge}</span>}
+            </div>
+            {item.description && <p className="text-xs text-gray-400 leading-relaxed">{item.description}</p>}
+            {item.time && <span className="text-[10px] text-gray-600 mt-1 block">{item.time}</span>}
+          </div>
+        </div>
+      ))}
+    </div>
+  ),
+  Icon: ({ name = "circle", size = 20, color = "currentColor", className = "" }) => {
+    const icons = {
+      user: "M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2M12 11a4 4 0 100-8 4 4 0 000 8z",
+      home: "M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z",
+      settings: "M12 15a3 3 0 100-6 3 3 0 000 6zM19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z",
+      search: "M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z",
+      bell: "M15 17H9a6 6 0 01-6-6V9a6 6 0 0112 0v2a6 6 0 01-6 6zM13.73 21a2 2 0 01-3.46 0",
+      mail: "M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2zm0 0l8 8 8-8",
+      trash: "M3 6h18M8 6V4h8v2M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6",
+      edit: "M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z",
+      plus: "M12 5v14M5 12h14",
+      minus: "M5 12h14",
+      close: "M18 6L6 18M6 6l12 12",
+      check: "M5 13l4 4L19 7",
+      "arrow-right": "M5 12h14M12 5l7 7-7 7",
+      "arrow-left": "M19 12H5M12 19l-7-7 7-7",
+      download: "M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3",
+      upload: "M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12",
+      eye: "M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8zM12 9a3 3 0 100 6 3 3 0 000-6z",
+      lock: "M19 11H5a2 2 0 00-2 2v7a2 2 0 002 2h14a2 2 0 002-2v-7a2 2 0 00-2-2zM7 11V7a5 5 0 0110 0v4",
+      star: "M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z",
+      heart: "M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z",
+      info: "M12 16v-4M12 8h.01M22 12a10 10 0 11-20 0 10 10 0 0120 0z",
+      warning: "M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0zM12 9v4M12 17h.01",
+      "log-out": "M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9",
+      menu: "M3 12h18M3 6h18M3 18h18",
+      "chevron-down": "M19 9l-7 7-7-7",
+      "chevron-right": "M9 18l6-6-6-6",
+      circle: "M12 12m-9 0a9 9 0 1018 0a9 9 0 00-18 0",
+    };
+    const path = icons[name] || icons.circle;
+    return (
+      <svg
+        width={size}
+        height={size}
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke={color}
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        className={className}
+        aria-label={name}
+      >
+        <path d={path} />
+      </svg>
+    );
+  },
 };
+
+/**
+ * Error Boundary - Catches JavaScript errors in child components
+ * and displays a fallback UI instead of crashing the entire app.
+ */
+export class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null, errorInfo: null };
+  }
+
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error, errorInfo) {
+    console.error("[PyReact ErrorBoundary]", error, errorInfo);
+    this.setState({ errorInfo });
+    // Log to backend if available
+    try {
+      fetch("/api/analytics", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          event: "error",
+          data: { message: error.message, stack: error.stack, componentStack: errorInfo.componentStack }
+        })
+      }).catch(() => {});
+    } catch (e) {}
+  }
+
+  render() {
+    if (this.state.hasError) {
+      if (this.props.fallback) {
+        return this.props.fallback;
+      }
+      return (
+        <div className="min-h-screen bg-[#0b0f19] text-white flex items-center justify-center p-6">
+          <div className="max-w-lg w-full bg-red-950/20 border border-red-500/30 rounded-2xl p-8 shadow-2xl">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 rounded-full bg-red-500/20 flex items-center justify-center">
+                <span className="text-red-400 text-xl">!</span>
+              </div>
+              <h2 className="text-xl font-bold text-red-400">Component Error</h2>
+            </div>
+            <p className="text-gray-300 mb-4 text-sm">An error occurred while rendering this component.</p>
+            <details className="mb-4">
+              <summary className="text-xs text-gray-400 cursor-pointer hover:text-white">Error Details</summary>
+              <pre className="mt-2 p-3 bg-black/50 rounded-lg text-xs text-red-300 overflow-auto max-h-40">
+                {this.state.error?.toString()}
+              </pre>
+            </details>
+            <button
+              onClick={() => this.setState({ hasError: false, error: null, errorInfo: null })}
+              className="px-4 py-2 bg-red-600 hover:bg-red-500 text-white rounded-lg text-sm font-medium transition"
+            >
+              Try Again
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+/**
+ * Image Component - Optimized image loading with lazy load and WebP support
+ */
+const Image = ({ src, alt = "", width, height, className = "", loading = "lazy", placeholder = "blur" }) => {
+  const [loaded, setLoaded] = React.useState(false);
+  const [error, setError] = React.useState(false);
+  const imgRef = React.useRef(null);
+  const [inView, setInView] = React.useState(loading !== "lazy");
+
+  React.useEffect(() => {
+    if (loading !== "lazy" || !imgRef.current) return;
+    const observer = new IntersectionObserver(
+      ([entry]) => { if (entry.isIntersecting) { setInView(true); observer.disconnect(); } },
+      { rootMargin: "50px" }
+    );
+    observer.observe(imgRef.current);
+    return () => observer.disconnect();
+  }, [loading]);
+
+  return (
+    <div ref={imgRef} className={`relative overflow-hidden ${className}`} style={{ width, height }}>
+      {!loaded && !error && (
+        <div className="absolute inset-0 bg-gray-800 animate-pulse rounded-lg" />
+      )}
+      {error && (
+        <div className="absolute inset-0 bg-gray-800 flex items-center justify-center text-gray-500 text-sm rounded-lg">
+          Failed to load image
+        </div>
+      )}
+      {inView && (
+        <img
+          src={src}
+          alt={alt}
+          width={width}
+          height={height}
+          onLoad={() => setLoaded(true)}
+          onError={() => setError(true)}
+          className={`transition-opacity duration-300 ${loaded ? "opacity-100" : "opacity-0"}`}
+          loading={loading}
+        />
+      )}
+    </div>
+  );
+};
+UI.Image = Image;
+
+/**
+ * Analytics Hook - Track page views and custom events
+ */
+const useAnalytics = () => {
+  const [sessionId] = React.useState(() => {
+    let id = sessionStorage.getItem("pyreact_session");
+    if (!id) {
+      id = "sess_" + Date.now() + "_" + Math.random().toString(36).substr(2, 9);
+      sessionStorage.setItem("pyreact_session", id);
+    }
+    return id;
+  });
+
+  // Auto-track page view on mount
+  React.useEffect(() => {
+    const path = window.location.pathname;
+    track("page_view", { path, title: document.title, sessionId });
+  }, []);
+
+  const track = (event, data = {}) => {
+    const eventData = { ...data, sessionId, timestamp: new Date().toISOString() };
+    // Store locally
+    const events = JSON.parse(localStorage.getItem("pyreact_analytics") || "[]");
+    events.push({ event, data: eventData });
+    localStorage.setItem("pyreact_analytics", JSON.stringify(events.slice(-500)));
+    // Send to backend
+    fetch("/api/analytics", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ event, data: eventData })
+    }).catch(() => {});
+  };
+
+  return { track, sessionId };
+};
+UI.useAnalytics = useAnalytics;
 
 export default UI;
 """
@@ -841,8 +1291,37 @@ class CodeGenerator:
         self.out = Path(out_dir)
         self.target = target
 
+    def _gen_env_files(self):
+        env_file = Path(".env.pyreact")
+        server_lines = []
+        public_lines = []
+        if env_file.exists():
+            for line in env_file.read_text(encoding="utf-8", errors="replace").splitlines():
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    k, v = line.split("=", 1)
+                    k = k.strip()
+                    v = v.strip()
+                    if k.startswith("SERVER_"):
+                        server_lines.append(f"{k}={v}")
+                    elif k.startswith("PUBLIC_"):
+                        public_lines.append(f"VITE_{k}={v}")
+
+        # Write to backend/.env
+        be_env = self.out / "backend" / ".env"
+        be_env.parent.mkdir(parents=True, exist_ok=True)
+        if server_lines:
+            be_env.write_text("\n".join(server_lines) + "\n", encoding="utf-8")
+
+        # Write to frontend/.env
+        fe_env = self.out / "frontend" / ".env"
+        fe_env.parent.mkdir(parents=True, exist_ok=True)
+        if public_lines:
+            fe_env.write_text("\n".join(public_lines) + "\n", encoding="utf-8")
+
     def generate(self):
         self.out.mkdir(parents=True, exist_ok=True)
+        self._gen_env_files()
         if self.target == "flask":
             self._gen_backend()
         elif self.target in ("fastapi", "serverless"):
@@ -872,6 +1351,14 @@ class CodeGenerator:
         # 1. Custom app.py
         flask_app_code = '"""Auto-generated by PYREACT compiler."""\n'
         flask_app_code += 'import os\n'
+        flask_app_code += '# Load .env environment variables if present\n'
+        flask_app_code += 'if os.path.exists(".env"):\n'
+        flask_app_code += '    with open(".env", "r", encoding="utf-8") as _env_f:\n'
+        flask_app_code += '        for _line in _env_f:\n'
+        flask_app_code += '            _line = _line.strip()\n'
+        flask_app_code += '            if _line and not _line.startswith("#") and "=" in _line:\n'
+        flask_app_code += '                _k, _v = _line.split("=", 1)\n'
+        flask_app_code += '                os.environ[_k.strip()] = _v.strip()\n\n'
         flask_app_code += 'from flask import Flask\n'
         flask_app_code += 'from flask_cors import CORS\n'
 
@@ -883,6 +1370,7 @@ class CodeGenerator:
                 flask_app_code += 'CORS(app)\n\n'
                 if db_block.provider == "sqlite":
                     flask_app_code += 'os.makedirs(app.instance_path, exist_ok=True)\n'
+
                     db_url = db_block.url
                     if not os.path.isabs(db_url) and not db_url.startswith("file:"):
                         flask_app_code += f'db_path = os.path.join(app.instance_path, "{db_url}")\n'
@@ -919,6 +1407,20 @@ class CodeGenerator:
 
         flask_app_code += 'from routes import register_routes\n'
         flask_app_code += 'register_routes(app)\n\n'
+
+        # Middleware generation
+        if self.ast.middleware and self.ast.middleware.functions:
+            flask_app_code += '# Auto-generated Middleware (PyReact)\n'
+            for mw_func in self.ast.middleware.functions:
+                flask_app_code += f'def {mw_func.name}({", ".join(mw_func.params)}):\n'
+                for body_line in mw_func.body.splitlines():
+                    flask_app_code += f'    {body_line}\n'
+                flask_app_code += '\n'
+                flask_app_code += f'@app.before_request\n'
+                flask_app_code += f'def _mw_{mw_func.name}():\n'
+                flask_app_code += f'    result = {mw_func.name}(request)\n'
+                flask_app_code += f'    if result is not None:\n'
+                flask_app_code += f'        return result\n\n'
         
         if self.ast.database and self.ast.database.provider in ("sqlite", "postgresql", "mysql"):
             flask_app_code += '# Create tables and apply auto-migrations\n'
@@ -945,6 +1447,99 @@ class CodeGenerator:
             flask_app_code += '                            db.session.rollback()\n\n'
             flask_app_code += 'with app.app_context():\n'
             flask_app_code += '    auto_migrate(app, db)\n\n'
+
+        # Add OpenAPI documentation endpoints
+        flask_app_code += '''
+# ── OpenAPI Documentation ─────────────────────────────────────────────────
+import json as _json
+
+@app.route("/api/openapi.json")
+def openapi_spec():
+    """Serve OpenAPI 3.0 specification."""
+    from flask import jsonify
+    spec = {
+        "openapi": "3.0.3",
+        "info": {
+            "title": "PyReact API",
+            "description": "Auto-generated API documentation",
+            "version": "1.0.0"
+        },
+        "servers": [{"url": "http://localhost:5000", "description": "Development"}],
+        "paths": {},
+        "components": {
+            "securitySchemes": {
+                "bearerAuth": {"type": "http", "scheme": "bearer", "bearerFormat": "JWT"}
+            }
+        }
+    }
+    # Add API endpoints from routes
+    for rule in app.url_map.iter_rules():
+        if rule.endpoint.startswith("api_") or rule.rule.startswith("/api/"):
+            if rule.rule not in ["/api/openapi.json", "/api/docs"]:
+                spec["paths"][rule.rule] = {
+                    method.lower(): {
+                        "summary": rule.endpoint,
+                        "responses": {"200": {"description": "Success"}}
+                    }
+                    for method in rule.methods if method not in ["HEAD", "OPTIONS"]
+                }
+    return jsonify(spec)
+
+@app.route("/api/docs")
+def api_docs():
+    """Serve Swagger UI for API documentation."""
+    return """<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><title>PyReact API Docs</title>
+<link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css">
+<style>body{margin:0}.swagger-ui .topbar{display:none}</style></head>
+<body><div id="swagger-ui"></div>
+<script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
+<script>SwaggerUIBundle({url:"/api/openapi.json",dom_id:"#swagger-ui",
+presets:[SwaggerUIBundle.presets.apis],layout:"BaseLayout"});</script>
+</body></html>"""
+
+# ── SSR (Server-Side Rendering) ──────────────────────────────────────────────
+@app.route("/api/ssr/<component_name>")
+def ssr_render(component_name):
+    """Server-side render a component shell to HTML string."""
+    html = f"""
+    <div id="ssr-{component_name}" data-pyreact-ssr="true">
+        <div class="min-h-screen bg-[#0b0f19] text-white p-6 animate-pulse">
+            <div class="max-w-4xl mx-auto space-y-4">
+                <div class="h-8 bg-gray-800 rounded w-1/3"></div>
+                <div class="h-4 bg-gray-800 rounded w-2/3"></div>
+                <div class="h-32 bg-gray-800 rounded"></div>
+            </div>
+        </div>
+    </div>
+    <script>window.__PYREACT_SSR__ = {{component: "{component_name}", rendered: true}};</script>
+    """
+    return html
+
+# ── Analytics Endpoint ────────────────────────────────────────────────────────
+analytics_events = []
+
+@app.route("/api/analytics", methods=["POST"])
+def track_analytics():
+    """Track analytics events."""
+    data = request.json or {}
+    import datetime
+    event = {
+        "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
+        "event": data.get("event", "unknown"),
+        "data": data.get("data", {})
+    }
+    analytics_events.append(event)
+    if len(analytics_events) > 1000:
+        analytics_events.pop(0)
+    return {"status": "ok", "total_events": len(analytics_events)}
+
+@app.route("/api/analytics/events")
+def get_analytics():
+    """Get recent analytics events."""
+    return {"events": analytics_events[-100:]}
+
+'''
 
         flask_app_code += 'if __name__ == "__main__":\n'
         flask_app_code += '    app.run(debug=True, port=5000)\n'
@@ -2349,6 +2944,11 @@ self.addEventListener('fetch', event => {
             store_code += '};\n'
             wt(src / "store.js", store_code)
 
+        # Generate i18n.js if locale block exists
+        if self.ast.locale:
+            i18n_code = self._gen_i18n_js()
+            wt(src / "i18n.js", i18n_code)
+
         # Generate App.jsx — pakai router baru jika ada routing config
         wt(src / "App.jsx", self._gen_app_jsx())
 
@@ -2404,10 +3004,12 @@ self.addEventListener('fetch', event => {
                 root = comps[0].name
 
         lines = ['import React from "react";']
-        lines.append('import { UI } from "./ui/components";')
+        lines.append('import { UI, ErrorBoundary } from "./ui/components";')
         lines.append('import { server } from "./pybridge";')
         if self.ast.shared_state:
             lines.append('import { useSharedState } from "./store";')
+        if self.ast.locale:
+            lines.append('import { useI18n } from "./i18n";')
         if self.ast.database:
             lines.append('const AdminConsole = React.lazy(() => import("./ui/Admin"));')
         lines.append("")
@@ -2425,6 +3027,7 @@ self.addEventListener('fetch', event => {
             lines.append("    return () => window.removeEventListener('popstate', handlePopState);")
             lines.append("  }, []);")
         lines.append("  return (")
+        lines.append('    <ErrorBoundary>')
         lines.append('    <React.Suspense fallback={<div className="min-h-screen flex items-center justify-center bg-[#090d16] text-white">Loading...</div>}>')
         if self.ast.database:
             lines.append("      {isAdmin ? (")
@@ -2435,6 +3038,7 @@ self.addEventListener('fetch', event => {
         else:
             lines.append(f"      <{root} />")
         lines.append("    </React.Suspense>")
+        lines.append('    </ErrorBoundary>')
         lines.append("  );")
         lines.append("}")
         return "\n".join(lines) + "\n"
@@ -3220,14 +3824,49 @@ export default function AdminConsole() {
         lines.append("")
         lines.append(f"export default function {comp.name}({{{', '.join(comp.params)}}}) {{")
 
+        # Add prop validation in development mode
+        if comp.params:
+            lines.append("  // Prop validation (development only)")
+            lines.append('  if (process.env.NODE_ENV === "development") {')
+            for param in comp.params:
+                lines.append(f'    if ({param} === undefined) console.warn("[{comp.name}] Missing prop: {param}");')
+            lines.append("  }")
+            lines.append("")
+
         if self.ast.shared_state:
             lines.append("  const [shared, setShared] = useSharedState();")
+
+        for r in comp.refs:
+            init = self._py_to_js(r.initial)
+            lines.append(f"  const {r.name} = React.useRef({init});")
+
+        for rv in comp.reducers:
+            init = self._py_to_js(rv.initial)
+            lines.append(f"  const [{rv.state}, {rv.dispatch}] = React.useReducer({rv.reducer}, {init});")
 
         for s in comp.states:
             init = self._py_to_js(s.initial)
             lines.append(f"  const [{s.name}, {s.setter}] = React.useState({init});")
 
-        if comp.states or self.ast.shared_state:
+        for mv in comp.memos:
+            expr_js = self._translate_handler(mv.expr)
+            lines.append(f"  const {mv.name} = React.useMemo(() => {{")
+            lines.append(f"    return {expr_js};")
+            lines.append(f"  }}, {mv.deps});")
+
+        for cb in comp.callbacks:
+            body_js = self._translate_handler(cb.body)
+            lines.append(f"  const {cb.name} = React.useCallback(() => {{")
+            lines.append(f"    {body_js}")
+            lines.append(f"  }}, {cb.deps});")
+
+        for eff in comp.effects:
+            body_js = self._translate_handler(eff.body)
+            lines.append(f"  React.useEffect(() => {{")
+            lines.append(f"    {body_js}")
+            lines.append(f"  }}, {eff.deps});")
+
+        if comp.refs or comp.reducers or comp.states or comp.memos or comp.callbacks or comp.effects or self.ast.shared_state:
             lines.append("")
 
         for h in comp.handlers:
@@ -3250,144 +3889,346 @@ export default function AdminConsole() {
 
     def _gen_devtools_jsx(self) -> str:
         lines = [
-            'import React, { useState, useEffect } from "react";',
+            'import React, { useState, useEffect, useCallback } from "react";',
         ]
         if self.ast.shared_state:
             lines.append('import { getSharedState } from "../store";')
         
+        # Collect static metadata from AST
+        server_funcs = []
+        if self.ast.server and self.ast.server.functions:
+            for f in self.ast.server.functions:
+                server_funcs.append({"name": f.name, "params": getattr(f, 'params', []) or []})
+        
+        component_names = [c.name for c in self.ast.components]
+        
+        # Collect route info from pages block
+        route_entries = []
+        if self.ast.pages:
+            for comp_name, route_path in self.ast.pages.routes.items():
+                route_entries.append({"path": route_path.strip('"').strip("'"), "component": comp_name})
+        
+        if not route_entries and component_names:
+            route_entries.append({"path": "/", "component": component_names[0]})
+        
+        # Collect middleware info
+        middleware_names = []
+        if self.ast.middleware and self.ast.middleware.functions:
+            middleware_names = [f.name for f in self.ast.middleware.functions]
+        
+        # Collect model info
+        model_names = [m.name for m in self.ast.models] if self.ast.models else []
+        
+        import json as _json
+        server_funcs_json = _json.dumps(server_funcs)
+        components_json = _json.dumps(component_names)
+        routes_json = _json.dumps(route_entries)
+        middleware_json = _json.dumps(middleware_names)
+        models_json = _json.dumps(model_names)
+        
         # Build the JSX content for DevTools
-        jsx = """
-export default function DevTools() {
+        jsx = f"""
+const SERVER_FUNCS = {server_funcs_json};
+const COMPONENTS = {components_json};
+const ROUTES = {routes_json};
+const MIDDLEWARE = {middleware_json};
+const MODELS = {models_json};
+
+export default function DevTools() {{
   const [open, setOpen] = useState(false);
   const [logs, setLogs] = useState([]);
   const [activeTab, setActiveTab] = useState("rpc");
   const [shared, setShared] = useState(null);
+  const [componentStates, setComponentStates] = useState({{}});
+  const [rpcStats, setRpcStats] = useState({{ total: 0, success: 0, error: 0, pending: 0 }});
 
-  useEffect(() => {
-    const updateLogs = () => {
-      setLogs([...(window.__pyreact_rpc_logs || [])]);
-    };
+  const updateRpcStats = useCallback((logList) => {{
+    setRpcStats({{
+      total: logList.length,
+      success: logList.filter(l => l.status === "success").length,
+      error: logList.filter(l => l.status === "error").length,
+      pending: logList.filter(l => l.status === "pending").length,
+    }});
+  }}, []);
+
+  useEffect(() => {{
+    const updateLogs = () => {{
+      const allLogs = [...(window.__pyreact_rpc_logs || [])];
+      setLogs(allLogs);
+      updateRpcStats(allLogs);
+    }};
     window.addEventListener("pyreact-rpc-log-update", updateLogs);
     updateLogs();
     
-    const interval = setInterval(() => {
-      try {
+    // Poll shared state and component state
+    const interval = setInterval(() => {{
+      try {{
 """
         if self.ast.shared_state:
             jsx += "        const state = getSharedState();\n        setShared(state);\n"
         else:
             jsx += "        setShared(null);\n"
             
-        jsx += """      } catch (e) {}
-    }, 1000);
+        jsx += f"""        // Collect component states from React DevTools hook
+        const states = {{}};
+        COMPONENTS.forEach(compName => {{
+          const el = document.querySelector('[data-pyreact-component="' + compName + '"]');
+          if (el) {{
+            const stateAttrs = {{}};
+            for (const attr of el.attributes) {{
+              if (attr.name.startsWith('data-state-')) {{
+                try {{ stateAttrs[attr.name.replace('data-state-', '')] = JSON.parse(attr.value); }}
+                catch {{ stateAttrs[attr.name.replace('data-state-', '')] = attr.value; }}
+              }}
+            }}
+            if (Object.keys(stateAttrs).length > 0) states[compName] = stateAttrs;
+          }}
+        }});
+        setComponentStates(states);
+      }} catch (e) {{}}
+    }}, 1000);
 
-    return () => {
+    return () => {{
       window.removeEventListener("pyreact-rpc-log-update", updateLogs);
       clearInterval(interval);
-    };
-  }, []);
+    }};
+  }}, []);
 
-  if (!open) {
+  if (!open) {{
     return (
       <div 
-        onClick={() => setOpen(true)}
+        onClick={{() => setOpen(true)}}
         className="fixed bottom-6 right-6 z-[9999] bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-semibold text-xs px-4 py-2.5 rounded-full shadow-2xl cursor-pointer hover:scale-105 active:scale-95 transition-all duration-200 border border-white/10 flex items-center gap-1.5"
       >
         <span className="w-2.5 h-2.5 bg-green-400 rounded-full animate-ping" />
         PyReact DevTools
       </div>
     );
-  }
+  }}
 
   return (
-    <div className="fixed bottom-6 right-6 w-[450px] h-[500px] z-[9999] bg-[#0c101d]/90 backdrop-blur-xl border border-white/10 rounded-2xl shadow-2xl flex flex-col overflow-hidden text-white font-sans text-left">
-      {/* Header */}
+    <div className="fixed bottom-6 right-6 w-[520px] h-[560px] z-[9999] bg-[#0c101d]/95 backdrop-blur-xl border border-white/10 rounded-2xl shadow-2xl flex flex-col overflow-hidden text-white font-sans text-left">
+      {{/* Header */}}
       <div className="px-4 py-3 bg-white/5 border-b border-white/10 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <span className="font-bold text-sm bg-gradient-to-r from-blue-400 to-indigo-400 bg-clip-text text-transparent">PyReact DevTools</span>
           <span className="text-[10px] bg-white/10 text-white/60 px-2 py-0.5 rounded-full">v0.1.0</span>
         </div>
+        <div className="flex items-center gap-2">
+          {{rpcStats.error > 0 && <span className="text-[10px] bg-red-500/20 text-red-400 px-2 py-0.5 rounded-full">{{rpcStats.error}} err</span>}}
+          <button 
+            onClick={{() => setOpen(false)}}
+            className="text-white/60 hover:text-white text-lg font-semibold hover:bg-white/10 w-6 h-6 rounded-full flex items-center justify-center transition"
+          >
+            &times;
+          </button>
+        </div>
+      </div>
+
+      {{/* Tabs */}}
+      <div className="flex bg-white/5 border-b border-white/5 text-[11px] overflow-x-auto">
         <button 
-          onClick={() => setOpen(false)}
-          className="text-white/60 hover:text-white text-lg font-semibold hover:bg-white/10 w-6 h-6 rounded-full flex items-center justify-center transition"
+          onClick={{() => setActiveTab("rpc")}}
+          className={{`px-3 py-2 font-medium border-b-2 transition whitespace-nowrap ${{activeTab === "rpc" ? "border-blue-500 text-blue-400 bg-white/5" : "border-transparent text-white/60 hover:text-white"}}`}}
         >
-          &times;
+          RPC Log ({{logs.length}})
+        </button>
+        <button 
+          onClick={{() => setActiveTab("server")}}
+          className={{`px-3 py-2 font-medium border-b-2 transition whitespace-nowrap ${{activeTab === "server" ? "border-blue-500 text-blue-400 bg-white/5" : "border-transparent text-white/60 hover:text-white"}}`}}
+        >
+          Server Functions
+        </button>
+        <button 
+          onClick={{() => setActiveTab("state")}}
+          className={{`px-3 py-2 font-medium border-b-2 transition whitespace-nowrap ${{activeTab === "state" ? "border-blue-500 text-blue-400 bg-white/5" : "border-transparent text-white/60 hover:text-white"}}`}}
+        >
+          State Inspector
+        </button>
+        <button 
+          onClick={{() => setActiveTab("routes")}}
+          className={{`px-3 py-2 font-medium border-b-2 transition whitespace-nowrap ${{activeTab === "routes" ? "border-blue-500 text-blue-400 bg-white/5" : "border-transparent text-white/60 hover:text-white"}}`}}
+        >
+          Routes
+        </button>
+        <button 
+          onClick={{() => setActiveTab("system")}}
+          className={{`px-3 py-2 font-medium border-b-2 transition whitespace-nowrap ${{activeTab === "system" ? "border-blue-500 text-blue-400 bg-white/5" : "border-transparent text-white/60 hover:text-white"}}`}}
+        >
+          System
         </button>
       </div>
 
-      {/* Tabs */}
-      <div className="flex bg-white/5 border-b border-white/5 text-xs">
-        <button 
-          onClick={() => setActiveTab("rpc")}
-          className={`flex-1 py-2 font-medium border-b-2 transition ${activeTab === "rpc" ? "border-blue-500 text-blue-400 bg-white/5" : "border-transparent text-white/60 hover:text-white"}`}
-        >
-          RPC Log ({logs.length})
-        </button>
-        <button 
-          onClick={() => setActiveTab("state")}
-          className={`flex-1 py-2 font-medium border-b-2 transition ${activeTab === "state" ? "border-blue-500 text-blue-400 bg-white/5" : "border-transparent text-white/60 hover:text-white"}`}
-        >
-          Shared State
-        </button>
-        <button 
-          onClick={() => setActiveTab("system")}
-          className={`flex-1 py-2 font-medium border-b-2 transition ${activeTab === "system" ? "border-blue-500 text-blue-400 bg-white/5" : "border-transparent text-white/60 hover:text-white"}`}
-        >
-          System Info
-        </button>
-      </div>
-
-      {/* Content */}
+      {{/* Content */}}
       <div className="flex-1 p-4 overflow-y-auto text-sm">
-        {activeTab === "rpc" && (
+        {{activeTab === "rpc" && (
           <div className="space-y-3">
-            {logs.length === 0 ? (
+            {{logs.length === 0 ? (
               <div className="text-center text-white/40 py-12">No RPC requests made yet.</div>
             ) : (
-              logs.map((log, idx) => (
-                <div key={idx} className="p-3 bg-white/5 rounded-xl border border-white/5 hover:border-white/10 transition">
-                  <div className="flex justify-between items-center mb-1.5">
-                    <span className="font-mono text-xs text-blue-400 font-bold">server.{log.method}()</span>
-                    <span className={`text-[10px] px-2 py-0.5 rounded-full ${log.status === "success" ? "bg-green-500/20 text-green-400" : log.status === "pending" ? "bg-yellow-500/20 text-yellow-400" : "bg-red-500/20 text-red-400"}`}>
-                      {log.status}
-                    </span>
+              <>
+                <div className="flex gap-2 mb-3">
+                  <span className="text-[10px] px-2 py-1 rounded-full bg-blue-500/10 text-blue-400">Total: {{rpcStats.total}}</span>
+                  <span className="text-[10px] px-2 py-1 rounded-full bg-green-500/10 text-green-400">OK: {{rpcStats.success}}</span>
+                  <span className="text-[10px] px-2 py-1 rounded-full bg-red-500/10 text-red-400">Err: {{rpcStats.error}}</span>
+                  <button onClick={{() => {{ window.__pyreact_rpc_logs = []; setLogs([]); setRpcStats({{total:0,success:0,error:0,pending:0}}); }}}} className="text-[10px] px-2 py-1 rounded-full bg-white/5 text-white/40 hover:text-white/60 ml-auto cursor-pointer">Clear</button>
+                </div>
+                {{logs.map((log, idx) => (
+                  <div key={{idx}} className="p-3 bg-white/5 rounded-xl border border-white/5 hover:border-white/10 transition">
+                    <div className="flex justify-between items-center mb-1.5">
+                      <span className="font-mono text-xs text-blue-400 font-bold">server.{{log.method}}()</span>
+                      <span className={{`text-[10px] px-2 py-0.5 rounded-full ${{log.status === "success" ? "bg-green-500/20 text-green-400" : log.status === "pending" ? "bg-yellow-500/20 text-yellow-400" : "bg-red-500/20 text-red-400"}}`}}>
+                        {{log.status}}
+                      </span>
+                    </div>
+                    <div className="text-xs text-white/60 font-mono space-y-1">
+                      <div><span className="text-white/40">Args:</span> {{JSON.stringify(log.args)}}</div>
+                      {{log.response && <div><span className="text-white/40">Res:</span> {{JSON.stringify(log.response)}}</div>}}
+                      <div className="text-[10px] text-white/30 text-right">{{log.timestamp}}</div>
+                    </div>
                   </div>
-                  <div className="text-xs text-white/60 font-mono space-y-1">
-                    <div><span className="text-white/40">Args:</span> {JSON.stringify(log.args)}</div>
-                    {log.response && <div><span className="text-white/40">Res:</span> {JSON.stringify(log.response)}</div>}
-                    <div className="text-[10px] text-white/30 text-right">{log.timestamp}</div>
+                ))}}
+              </>
+            )}}
+          </div>
+        )}}
+
+        {{activeTab === "server" && (
+          <div className="space-y-3">
+            <div className="text-white/40 text-xs mb-2">Backend API Endpoints</div>
+            {{SERVER_FUNCS.length === 0 ? (
+              <div className="text-center text-white/40 py-12">No server functions defined.</div>
+            ) : (
+              SERVER_FUNCS.map((fn, idx) => {{
+                const callCount = logs.filter(l => l.method === fn.name).length;
+                const lastCall = logs.filter(l => l.method === fn.name).slice(-1)[0];
+                return (
+                  <div key={{idx}} className="p-3 bg-white/5 rounded-xl border border-white/5 hover:border-white/10 transition">
+                    <div className="flex justify-between items-center mb-1">
+                      <span className="font-mono text-xs text-emerald-400 font-bold">POST /api/{{fn.name}}</span>
+                      {{callCount > 0 ? (
+                        <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-400">{{callCount}} calls</span>
+                      ) : (
+                        <span className="text-[10px] px-2 py-0.5 rounded-full bg-white/5 text-white/30">not called</span>
+                      )}}
+                    </div>
+                    <div className="text-xs text-white/50 font-mono">
+                      <span className="text-white/30">Frontend:</span> <span className="text-blue-300">server.{{fn.name}}(payload)</span>
+                    </div>
+                    {{lastCall && (
+                      <div className="mt-1.5 text-[11px] text-white/40">
+                        Last: <span className={{lastCall.status === "success" ? "text-green-400" : "text-red-400"}}>{{lastCall.status}}</span> at {{lastCall.timestamp}}
+                      </div>
+                    )}}
                   </div>
+                );
+              }})
+            )}}
+            {{MIDDLEWARE.length > 0 && (
+              <div className="mt-4">
+                <div className="text-white/40 text-xs mb-2">Middleware</div>
+                {{MIDDLEWARE.map((mw, idx) => (
+                  <div key={{idx}} className="p-2.5 bg-white/5 rounded-lg border border-white/5 text-xs font-mono">
+                    <span className="text-amber-400">@app.before_request</span>
+                    <span className="text-white/60 ml-2">{{mw}}</span>
+                  </div>
+                ))}}
+              </div>
+            )}}
+            {{MODELS.length > 0 && (
+              <div className="mt-4">
+                <div className="text-white/40 text-xs mb-2">Database Models</div>
+                {{MODELS.map((m, idx) => (
+                  <div key={{idx}} className="p-2.5 bg-white/5 rounded-lg border border-white/5 text-xs font-mono text-purple-400">{{m}}</div>
+                ))}}
+              </div>
+            )}}
+          </div>
+        )}}
+
+        {{activeTab === "state" && (
+          <div className="space-y-4">
+            {{/* Component State Inspector */}}
+            <div>
+              <div className="text-white/40 text-xs mb-2">Component State</div>
+              {{Object.keys(componentStates).length === 0 ? (
+                <div className="p-3 bg-white/5 rounded-xl border border-white/5 text-xs text-white/30">
+                  Component states will appear when components use data-pyreact-component attributes.
+                </div>
+              ) : (
+                Object.entries(componentStates).map(([compName, states]) => (
+                  <div key={{compName}} className="mb-3">
+                    <div className="text-xs font-semibold text-blue-400 mb-1.5">{{compName}}</div>
+                    {{Object.entries(states).map(([key, val]) => (
+                      <div key={{key}} className="p-2 bg-white/5 rounded-lg border border-white/5 flex justify-between text-xs font-mono ml-2 mb-1">
+                        <span className="text-indigo-400">{{key}}</span>
+                        <span className="text-green-400">{{JSON.stringify(val)}}</span>
+                      </div>
+                    ))}}
+                  </div>
+                ))
+              )}}
+            </div>
+            {{/* Shared State */}}
+            <div>
+              <div className="text-white/40 text-xs mb-2">Shared State (Global)</div>
+              {{!shared ? (
+                <div className="p-3 bg-white/5 rounded-xl border border-white/5 text-xs text-white/30">
+                  No active global shared state.
+                </div>
+              ) : (
+                <div className="font-mono text-xs space-y-2">
+                  {{Object.entries(shared).map(([k, v]) => (
+                    <div key={{k}} className="p-2.5 bg-white/5 rounded-lg border border-white/5 flex justify-between">
+                      <span className="text-indigo-400 font-semibold">{{k}}</span>
+                      <span className="text-green-400">{{JSON.stringify(v)}}</span>
+                    </div>
+                  ))}}
+                </div>
+              )}}
+            </div>
+          </div>
+        )}}
+
+        {{activeTab === "routes" && (
+          <div className="space-y-3">
+            <div className="text-white/40 text-xs mb-2">Route Map</div>
+            {{ROUTES.length === 0 ? (
+              <div className="text-center text-white/40 py-12">No routes defined.</div>
+            ) : (
+              ROUTES.map((route, idx) => (
+                <div key={{idx}} className="p-3 bg-white/5 rounded-xl border border-white/5 hover:border-white/10 transition">
+                  <div className="flex justify-between items-center">
+                    <span className="font-mono text-xs text-cyan-400 font-bold">{{route.path}}</span>
+                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400">{{route.component}}</span>
+                  </div>
+                  <div className="text-[11px] text-white/30 mt-1 font-mono">GET {{route.path}} → {{{{route.component}}}}</div>
                 </div>
               ))
-            )}
-          </div>
-        )}
-
-        {activeTab === "state" && (
-          <div>
-            {!shared ? (
-              <div className="text-center text-white/40 py-12">No active global shared state.</div>
-            ) : (
-              <div className="font-mono text-xs space-y-2">
-                <div className="text-white/40 mb-2">Live Store Variables:</div>
-                {Object.entries(shared).map(([k, v]) => (
-                  <div key={k} className="p-2.5 bg-white/5 rounded-lg border border-white/5 flex justify-between">
-                    <span className="text-indigo-400 font-semibold">{k}</span>
-                    <span className="text-green-400">{JSON.stringify(v)}</span>
-                  </div>
-                ))}
+            )}}
+            <div className="mt-4">
+              <div className="text-white/40 text-xs mb-2">Components ({{COMPONENTS.length}})</div>
+              <div className="flex flex-wrap gap-2">
+                {{COMPONENTS.map((c, idx) => (
+                  <span key={{idx}} className="text-[11px] px-2 py-1 rounded-full bg-white/5 border border-white/5 text-white/60 font-mono">{{c}}</span>
+                ))}}
               </div>
-            )}
+            </div>
           </div>
-        )}
+        )}}
 
-        {activeTab === "system" && (
+        {{activeTab === "system" && (
           <div className="space-y-3 text-xs font-mono">
             <div className="p-3 bg-white/5 rounded-xl border border-white/5 space-y-2">
               <div className="flex justify-between"><span className="text-white/40">PyReact Version:</span><span>v0.1.0</span></div>
               <div className="flex justify-between"><span className="text-white/40">Environment:</span><span className="text-green-400 font-semibold">Development</span></div>
               <div className="flex justify-between"><span className="text-white/40">HMR Watcher:</span><span>Vite Hot Reload</span></div>
               <div className="flex justify-between"><span className="text-white/40">Database Engine:</span><span>SQLite ORM</span></div>
+              <div className="flex justify-between"><span className="text-white/40">Server Functions:</span><span>{{SERVER_FUNCS.length}}</span></div>
+              <div className="flex justify-between"><span className="text-white/40">Components:</span><span>{{COMPONENTS.length}}</span></div>
+              <div className="flex justify-between"><span className="text-white/40">Routes:</span><span>{{ROUTES.length}}</span></div>
+              <div className="flex justify-between"><span className="text-white/40">Models:</span><span>{{MODELS.length}}</span></div>
+              <div className="flex justify-between"><span className="text-white/40">Middleware:</span><span>{{MIDDLEWARE.length}}</span></div>
             </div>
             <div className="p-3 bg-white/5 rounded-xl border border-white/5">
               <div className="text-white/40 mb-2">Engine Architecture:</div>
@@ -3396,14 +4237,118 @@ export default function DevTools() {
               </div>
             </div>
           </div>
-        )}
+        )}}
       </div>
     </div>
   );
-}
+}}
 """
         lines.append(jsx)
         return "\n".join(lines)
+
+    def _gen_i18n_js(self) -> str:
+        """Generate i18n.js for internationalization support."""
+        locale = self.ast.locale
+        if not locale:
+            return ""
+        
+        import json as _json
+        translations_json = _json.dumps(locale.translations, indent=2)
+        supported_json = _json.dumps(locale.supported)
+        default_lang = _json.dumps(locale.default)
+        
+        i18n_code = f'''/**
+ * PyReact i18n - Auto-generated Internationalization Module
+ * Default language: {locale.default}
+ * Supported: {", ".join(locale.supported)}
+ */
+import {{ useState, useEffect, useCallback }} from "react";
+
+const TRANSLATIONS = {translations_json};
+const SUPPORTED_LANGUAGES = {supported_json};
+const DEFAULT_LANGUAGE = {default_lang};
+
+// Get current language from localStorage or default
+let currentLang = localStorage.getItem("pyreact_lang") || DEFAULT_LANGUAGE;
+
+// Listeners for language changes
+const langListeners = new Set();
+
+/**
+ * Translate a key to the current language
+ * Usage: t("greeting") or t("greeting", {{name: "John"}})
+ */
+export const t = (key, params = {{}}) => {{
+  const entry = TRANSLATIONS[key];
+  if (!entry) {{
+    console.warn(`[i18n] Missing translation key: ${{key}}`);
+    return key;
+  }}
+  
+  let text = entry[currentLang] || entry[DEFAULT_LANGUAGE] || key;
+  
+  // Interpolate params: "Hello {{name}}" + {{name: "John"}} = "Hello John"
+  Object.entries(params).forEach(([k, v]) => {{
+    const pattern = new RegExp('\\\\' + '{{' + k + '}}' + '\\\\', 'g');
+    text = text.replace(pattern, String(v));
+  }});
+  
+  return text;
+}};
+
+/**
+ * Get current language
+ */
+export const getLanguage = () => currentLang;
+
+/**
+ * Set current language
+ */
+export const setLanguage = (lang) => {{
+  if (!SUPPORTED_LANGUAGES.includes(lang)) {{
+    console.warn(`[i18n] Unsupported language: ${{lang}}`);
+    return;
+  }}
+  currentLang = lang;
+  localStorage.setItem("pyreact_lang", lang);
+  for (const listener of langListeners) {{
+    listener(lang);
+  }}
+}};
+
+/**
+ * Get list of supported languages
+ */
+export const getSupportedLanguages = () => SUPPORTED_LANGUAGES;
+
+/**
+ * React hook for i18n
+ * Usage: const {{ t, lang, setLang }} = useI18n();
+ */
+export const useI18n = () => {{
+  const [lang, setLangState] = useState(currentLang);
+  
+  useEffect(() => {{
+    langListeners.add(setLangState);
+    return () => {{ langListeners.delete(setLangState); }};
+  }}, []);
+  
+  const changeLang = useCallback((newLang) => {{
+    setLanguage(newLang);
+  }}, []);
+  
+  return {{ t, lang, setLang: changeLang, languages: SUPPORTED_LANGUAGES }};
+}};
+
+// Detect browser language on first load
+if (typeof window !== "undefined" && !localStorage.getItem("pyreact_lang")) {{
+  const browserLang = navigator.language?.split("-")[0];
+  if (SUPPORTED_LANGUAGES.includes(browserLang)) {{
+    currentLang = browserLang;
+  }}
+}}
+'''
+        return i18n_code
 
     def _translate_handler(self, raw: str) -> str:
         dedented = textwrap.dedent(raw)

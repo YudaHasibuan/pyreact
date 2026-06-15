@@ -544,9 +544,40 @@ def init_hub_template(template_name: str, target_dir: Path) -> bool:
         
     # Write gitignore and default files
     gitignore = target_dir / ".gitignore"
-    gitignore.write_text("dist/\n__pycache__/\nnode_modules/\n.env\n")
-    readme = target_dir / "README.md"
-    readme.write_text(f"# PyReact Project: {template_name.upper()}\n\nBuilt with [PyReact Hub](https://pyreact.dev/hub)\n\n```bash\npyreact dev\n```\n")
+    gitignore.write_text("dist/\n__pycache__/\nnode_modules/\n.env\n.pyreact-hmr-trigger\n")
     
+    readme_content = f"""# PyReact Project: {template_name.upper()} 🚀
+
+Proyek ini dibangun menggunakan **PyReact** — Bahasa pemrograman web fullstack bertenaga Python.
+
+## 📦 Memulai Cepat
+
+```bash
+# 1. Jalankan server pengembangan (Flask + Vite)
+pyreact dev
+```
+
+## 📂 Struktur Proyek
+
+* `app.pyreact` — File entry point utama aplikasi Anda.
+* `AGENTS.md` — Panduan sintaksis PyReact khusus untuk asisten AI (seperti Cursor/Claude/Copilot).
+* `COOKBOOK.md` — Resep-resep pengerjaan umum (CRUD, Auth, Chart, dll.) siap pakai.
+* `.cursorrules` — File rules untuk Cursor IDE.
+* `components/` — Folder untuk meletakkan komponen tambahan.
+"""
+    readme = target_dir / "README.md"
+    readme.write_text(readme_content, encoding="utf-8")
+    
+    # Generate local AI context files using cli helpers
+    try:
+        from pyreact.cli import _generate_agents_md, _generate_cookbook_md, _generate_cursorrules, _create_components_dir
+        (target_dir / "AGENTS.md").write_text(_generate_agents_md(), encoding="utf-8")
+        (target_dir / "COOKBOOK.md").write_text(_generate_cookbook_md(), encoding="utf-8")
+        (target_dir / ".cursorrules").write_text(_generate_cursorrules(), encoding="utf-8")
+        _create_components_dir(target_dir)
+        print("  [OK] Created local AI context files (AGENTS.md, COOKBOOK.md, .cursorrules)")
+    except ImportError:
+        pass
+        
     print(f"  [OK] Successfully initialized marketplace template in '{target_dir}' directory.\n")
     return True

@@ -11,7 +11,8 @@ class TT(Enum):
     SERVER = auto(); COMPONENT = auto(); STYLE = auto(); MODEL = auto()
     DATABASE = auto(); DEPENDENCIES = auto(); SHARED_STATE = auto()
     AGENT = auto(); PIPELINE = auto(); PAGES = auto(); REALTIME = auto()
-    GRAPHQL = auto(); RBAC = auto(); WEBRTC = auto()
+    GRAPHQL = auto(); RBAC = auto(); WEBRTC = auto(); MIDDLEWARE = auto()
+    LOCALE = auto()  # i18n support
     LBRACE = auto(); RBRACE = auto(); LPAREN = auto(); RPAREN = auto()
     COLON = auto(); COMMA = auto(); EQUALS = auto(); NEWLINE = auto()
     IDENTIFIER = auto(); STRING = auto(); NUMBER = auto(); BOOL = auto()
@@ -35,13 +36,18 @@ KEYWORDS = {
     "agent": TT.AGENT, "pipeline": TT.PIPELINE,
     "pages": TT.PAGES, "realtime": TT.REALTIME,
     "graphql": TT.GRAPHQL, "rbac": TT.RBAC, "webrtc": TT.WEBRTC,
+    "middleware": TT.MIDDLEWARE, "locale": TT.LOCALE,
     "True": TT.BOOL, "False": TT.BOOL,
 }
 TokenType = TT  # alias for compat
 
 
 class LexerError(Exception):
-    pass
+    def __init__(self, message: str = "", line: int = 0, col: int = 0, suggestion: str = ""):
+        super().__init__(message)
+        self.line = line
+        self.col = col
+        self.suggestion = suggestion
 
 
 class Lexer:
@@ -90,11 +96,20 @@ class Lexer:
             if ch.isalpha() or ch == '_':
                 tok = self._read_ident()
                 self.tokens.append(tok)
-                if tok.type in (TT.SERVER, TT.STYLE, TT.COMPONENT, TT.MODEL, TT.DATABASE, TT.DEPENDENCIES, TT.SHARED_STATE, TT.AGENT, TT.PIPELINE, TT.PAGES, TT.REALTIME, TT.GRAPHQL, TT.RBAC, TT.WEBRTC):
+                if tok.type in (TT.SERVER, TT.STYLE, TT.COMPONENT, TT.MODEL, TT.DATABASE, TT.DEPENDENCIES, TT.SHARED_STATE, TT.AGENT, TT.PIPELINE, TT.PAGES, TT.REALTIME, TT.GRAPHQL, TT.RBAC, TT.WEBRTC, TT.MIDDLEWARE, TT.LOCALE):
                     self._emit_block()
                 continue
 
-            self.pos += 1; self.col += 1  # skip unknown
+            if ch in ('\ufeff', '\u200b'):
+                self.pos += 1
+                continue
+
+            raise LexerError(
+                message=f"Karakter tidak dikenal di tingkat atas: '{ch}'",
+                line=self.line,
+                col=self.col,
+                suggestion="Semua kode PyReact harus berada di dalam blok yang valid (seperti server { }, component Name():, style { }, dll.)."
+            )
 
         self.tokens.append(Token(TT.EOF, '', self.line, self.col))
         return self.tokens
@@ -180,12 +195,20 @@ class Lexer:
         triple = src[self.pos:self.pos+3] in ('"""', "'''")
         delim = src[self.pos:self.pos+3] if triple else q
         start = self.pos; self.pos += len(delim); self.col += len(delim)
+        closed = False
         while self.pos < len(src):
             if src[self.pos:self.pos+len(delim)] == delim:
-                self.pos += len(delim); self.col += len(delim); break
+                self.pos += len(delim); self.col += len(delim); closed = True; break
             if src[self.pos] == '\n': self.line += 1; self.col = 1
             else: self.col += 1
             self.pos += 1
+        if not closed:
+            raise LexerError(
+                message="String literal tidak ditutup (unclosed string literal)",
+                line=sl,
+                col=sc,
+                suggestion="Pastikan tanda kutip pembuka dan penutup string literal Anda cocok."
+            )
         return Token(TT.STRING, src[start:self.pos], sl, sc)
 
     def _read_number(self) -> Token:

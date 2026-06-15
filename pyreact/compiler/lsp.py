@@ -1,6 +1,62 @@
 """PYREACT Language Server Protocol (LSP) Server.
-Handles auto-completions, blocks detection, cross-boundary definition jump, and real-time validation.
+Handles auto-completions, hover documentation, blocks detection, cross-boundary definition jump, and real-time validation.
 """
+
+# ── Hover documentation data ────────────────────────────────────────────────────
+_UI_COMPONENT_DOCS = {
+    "Page": ("<UI.Page>", "Root page container with dark background.", "Props: className=str"),
+    "Navbar": ("<UI.Navbar>", "Fixed top navigation bar.", "Props: title=str, children"),
+    "Sidebar": ("<UI.Sidebar>", "Side navigation panel.", "Props: children"),
+    "Dashboard": ("<UI.Dashboard>", "Responsive grid layout for cards.", "Props: children"),
+    "Card": ("<UI.Card>", "Content card with optional title.", "Props: title=str, className=str, children"),
+    "MetricCard": ("<UI.MetricCard>", "KPI display card with label/value/trend.", "Props: label=str, value=any, trend=str"),
+    "Button": ("<UI.Button>", "Action button with variants.", "Props: onClick=fn, variant=primary|secondary|danger|ghost, loading=bool, disabled=bool, children"),
+    "Input": ("<UI.Input>", "Text input field with label.", "Props: label=str, value=str, onChange=fn, placeholder=str, type=str, helper=str"),
+    "TextArea": ("<UI.TextArea>", "Multi-line text input.", "Props: label=str, value=str, onChange=fn, placeholder=str, rows=int"),
+    "Select": ("<UI.Select>", "Dropdown select input.", "Props: label=str, value=str, onChange=fn, options=list"),
+    "Table": ("<UI.Table>", "Data table with columns and rows.", "Props: columns=list, rows=list"),
+    "Upload": ("<UI.Upload>", "File upload drop zone.", "Props: label=str, onFile=fn, accept=str"),
+    "Modal": ("<UI.Modal>", "Overlay dialog modal.", "Props: open=bool, onClose=fn, title=str, children"),
+    "Alert": ("<UI.Alert>", "Inline alert/notification banner.", "Props: type=info|success|error|warning, children"),
+    "Text": ("<UI.Text>", "Text paragraph component.", "Props: size=str, weight=str, color=str, className=str, children"),
+    "Heading": ("<UI.Heading>", "Section heading h1-h4.", "Props: level=1|2|3|4, children"),
+    "Divider": ("<UI.Divider>", "Horizontal divider line.", "Props: (none)"),
+    "Spinner": ("<UI.Spinner>", "Loading spinner indicator.", "Props: size=sm|md|lg"),
+    "Badge": ("<UI.Badge>", "Small status badge/tag.", "Props: color=str, children"),
+    "DataGrid": ("<UI.DataGrid>", "Alias for Table with data/columns props.", "Props: data=list, columns=list"),
+    "Chart": ("<UI.Chart>", "SVG bar or line chart.", "Props: type=bar|line, data=list, height=int"),
+    "Toast": ("<UI.Toast>", "Temporary notification popup.", "Props: message=str, type=info|success|error, visible=bool"),
+    "Tabs": ("<UI.Tabs>", "Tab navigation bar.", "Props: tabs=list, activeTab=str, onChange=fn"),
+    "Dropdown": ("<UI.Dropdown>", "Clickable dropdown menu.", "Props: label=str, options=list, onSelect=fn"),
+    "Accordion": ("<UI.Accordion>", "Collapsible content section.", "Props: title=str, children"),
+    "Calendar": ("<UI.Calendar>", "Date picker calendar widget.", "Props: value=Date, onChange=fn"),
+    "Chatbot": ("<UI.Chatbot>", "AI chat agent interface.", "Props: endpoint=str, placeholder=str"),
+    "NetworkStatus": ("<UI.NetworkStatus>", "Online/offline status indicator.", "Props: (none)"),
+    "useAuth": ("UI.useAuth()", "Authentication hook returning {user, login, logout, isAuthenticated}.", "Returns: { user, login(username, password), logout(), isAuthenticated }"),
+}
+
+_HOOK_DOCS = {
+    "use_state": ("use_state(initial_value)", "Component state hook. Compiles to React.useState.", "Returns: [value, setter]  |  Example: count, set_count = use_state(0)"),
+    "use_effect": ("use_effect(def(): ..., [deps])", "Side-effect hook. Compiles to React.useEffect.", "Params: callback function, dependency array  |  Example: use_effect(def(): document.title = 'Hi', [])"),
+    "use_sync_state": ("use_sync_state(key, initial)", "Real-time synced state via WebSocket. Compiles to shared state subscription.", "Returns: [value, setter]  |  Example: messages, set_messages = use_sync_state('messages', [])"),
+    "use_ref": ("ref = use_ref(initial)", "Mutable ref hook. Compiles to React.useRef.", "Access via ref.current  |  Example: player = use_ref(None)  →  player.current.play()"),
+    "use_memo": ("val = use_memo(def(): expr, [deps])", "Memoized value hook. Compiles to React.useMemo.", "Example: filtered = use_memo(def(): [x for x in items if x.active], [items])"),
+    "use_callback": ("fn = use_callback(def(): ..., [deps])", "Memoized callback hook. Compiles to React.useCallback.", "Example: on_click = use_callback(def(): do_thing(), [dep])"),
+    "use_reducer": ("state, dispatch = use_reducer(reducer, initial)", "Reducer-based state hook. Compiles to React.useReducer.", "Example: count, dispatch = use_reducer(reducer, 0)  |  dispatch({'type': 'inc'})"),
+}
+
+_BLOCK_DOCS = {
+    "server": ("server { ... }", "Backend server functions block. Each 'def' becomes a Flask API endpoint at /api/name.", "Functions are called from frontend via server.funcName(payload)"),
+    "component": ("component Name():", "Frontend UI component. Compiles to a React function component.", "Must start with uppercase. Use use_state/use_effect inside."),
+    "style": ("style { ... }", "CSS design tokens / variables block.", "Define colors, fonts, spacing as key: value pairs. Accessed via var(--key)."),
+    "model": ("model Name { ... }", "Database model definition. Compiles to SQLAlchemy model.", "Fields use type syntax: name str, age int, created_at datetime"),
+    "database": ("database { ... }", "Database configuration block.", "Sets engine, url, and other connection settings."),
+    "dependencies": ("dependencies { ... }", "Python package dependencies block.", "Lists pip packages needed by the backend."),
+    "shared_state": ("shared_state { ... }", "Global real-time state block. Variables sync across all clients via WebSocket.", "Access from frontend via shared.varName."),
+    "realtime": ("realtime { ... }", "WebSocket realtime communication block.", "Define event handlers for live updates."),
+    "middleware": ("middleware { ... }", "Request middleware block. Compiles to Flask @app.before_request.", "Functions receive 'request' object. Return dict to abort, or None to continue."),
+    "pages": ("pages { ... }", "File-system routing configuration block.", "Define URL routes mapped to components."),
+}
 import sys
 import json
 import re
@@ -72,6 +128,7 @@ class PyReactLspServer:
                         "completionProvider": {
                             "triggerCharacters": ["."]
                         },
+                        "hoverProvider": True,
                         "definitionProvider": True,
                         "codeActionProvider": True
                     }
@@ -144,6 +201,73 @@ class PyReactLspServer:
                 }
             return {"id": req_id, "jsonrpc": "2.0", "result": None}
 
+        elif method == "textDocument/hover":
+            uri = params.get("textDocument", {}).get("uri")
+            position = params.get("position", {})
+            line_idx = position.get("line", 0)
+            col_idx = position.get("character", 0)
+            
+            text = self.documents.get(uri, "")
+            lines = text.splitlines()
+            if line_idx >= len(lines):
+                return {"id": req_id, "jsonrpc": "2.0", "result": None}
+                
+            current_line = lines[line_idx]
+            
+            # Extract word under cursor
+            start_col = col_idx
+            while start_col > 0 and (current_line[start_col-1].isalnum() or current_line[start_col-1] == "_"):
+                start_col -= 1
+            end_col = col_idx
+            while end_col < len(current_line) and (current_line[end_col].isalnum() or current_line[end_col] == "_"):
+                end_col += 1
+            word = current_line[start_col:end_col]
+            
+            hover_content = None
+            
+            if word:
+                # Check UI.Component hover
+                line_before = current_line[:col_idx].rstrip()
+                if line_before.endswith("UI."):
+                    if word in _UI_COMPONENT_DOCS:
+                        sig, desc, props = _UI_COMPONENT_DOCS[word]
+                        hover_content = f"**{sig}**\n\n{desc}\n\n{props}"
+                
+                # Check hook hover
+                if word in _HOOK_DOCS:
+                    sig, desc, example = _HOOK_DOCS[word]
+                    hover_content = f"**{sig}**\n\n{desc}\n\n{example}"
+                
+                # Check block keyword hover
+                if word in _BLOCK_DOCS:
+                    sig, desc, extra = _BLOCK_DOCS[word]
+                    hover_content = f"**{sig}**\n\n{desc}\n\n{extra}"
+                
+                # Check server.function() hover
+                if line_before.endswith("server.") or ("server." in current_line and word in self.extract_server_functions(text)):
+                    hover_content = f"**server.{word}(payload)**\n\nBackend RPC endpoint. Compiles to POST /api/{word}.\n\nCall from frontend: `const result = await server.{word}({{ key: value }})`"
+                
+                # Check shared.variable hover
+                if line_before.endswith("shared.") or ("shared." in current_line and word in self.extract_shared_vars(text)):
+                    hover_content = f"**shared.{word}**\n\nGlobal shared state variable. Synced in real-time across all clients.\n\nAccess: `shared.{word}`  |  Set: `set_{word}(newValue)`"
+            
+            if hover_content:
+                return {
+                    "id": req_id,
+                    "jsonrpc": "2.0",
+                    "result": {
+                        "contents": {
+                            "kind": "markdown",
+                            "value": hover_content
+                        },
+                        "range": {
+                            "start": {"line": line_idx, "character": start_col},
+                            "end": {"line": line_idx, "character": end_col}
+                        }
+                    }
+                }
+            return {"id": req_id, "jsonrpc": "2.0", "result": None}
+
         elif method == "textDocument/codeAction":
             uri = params.get("textDocument", {}).get("uri")
             diagnostics = params.get("context", {}).get("diagnostics", [])
@@ -203,13 +327,14 @@ class PyReactLspServer:
             
             # 2. Autocomplete UI elements: UI.
             elif typed.endswith("UI."):
-                ui_components = ["Button", "Input", "Card", "Text", "Alert", "Table", "Chart", "Navbar", "Page", "DevTools"]
-                for comp in ui_components:
+                for comp_name, (sig, desc, props) in _UI_COMPONENT_DOCS.items():
+                    kind = 3 if comp_name == "useAuth" else 7
                     completions.append({
-                        "label": comp,
-                        "kind": 7,
-                        "detail": f"PyReact UI Component: <UI.{comp}>",
-                        "insertText": comp
+                        "label": comp_name,
+                        "kind": kind,
+                        "detail": f"{sig} - {desc}",
+                        "documentation": props,
+                        "insertText": comp_name
                     })
 
             # 3. Autocomplete shared state variables: shared.
@@ -236,14 +361,14 @@ class PyReactLspServer:
             
             # 5. Fallback default keywords and React hooks
             elif not typed or typed[-1].isspace() or typed[-1] in ("{", "(", ","):
-                keywords = ["server", "component", "style", "model", "database", "dependencies", "shared_state", "realtime"]
+                keywords = ["server", "component", "style", "model", "database", "dependencies", "shared_state", "realtime", "middleware"]
                 for kw in keywords:
                     completions.append({
                         "label": kw,
                         "kind": 14,
                         "detail": f"PyReact Block: {kw}"
                     })
-                hooks = ["use_state", "use_effect", "use_sync_state"]
+                hooks = ["use_state", "use_effect", "use_sync_state", "use_ref", "use_memo", "use_callback", "use_reducer"]
                 for hook in hooks:
                     completions.append({
                         "label": hook,
@@ -291,6 +416,36 @@ class PyReactLspServer:
                         "source": "pyreact",
                         "code": "capitalize_component"
                     })
+
+            # Anti-pattern detection: React hooks & patterns that should be PyReact
+            _ANTIPATTERNS = [
+                (r'\buseState\s*\(', "useState() terdeteksi. Gunakan PyReact: `val, setVal = use_state(initial)`", "use_useState"),
+                (r'\buseEffect\s*\(', "useEffect() terdeteksi. Gunakan PyReact: `use_effect(def(): ..., [deps])`", "use_useEffect"),
+                (r'\buseRef\s*\(', "useRef() terdeteksi. Gunakan PyReact: `ref = use_ref(None)`", "use_useRef"),
+                (r'\buseMemo\s*\(', "useMemo() terdeteksi. Gunakan PyReact: `val = use_memo(def(): expr, [deps])`", "use_useMemo"),
+                (r'\buseCallback\s*\(', "useCallback() terdeteksi. Gunakan PyReact: `fn = use_callback(def(): ..., [deps])`", "use_useCallback"),
+                (r'\buseReducer\s*\(', "useReducer() terdeteksi. Gunakan PyReact: `state, dispatch = use_reducer(reducer, initial)`", "use_useReducer"),
+                (r'\bfetch\s*\(', "fetch() terdeteksi. Gunakan PyReact PyBridge: `result = server.func_name(args)`", "use_fetch"),
+                (r'\baxios\b', "axios terdeteksi. Gunakan PyReact PyBridge: `result = server.func_name(args)`", "use_axios"),
+                (r'export\s+default\s+function', "export default function terdeteksi. Gunakan PyReact: `component Name():`", "use_export_default"),
+                (r'import\s+React\b', "import React tidak diperlukan di PyReact. Hapus baris ini.", "no_import_react"),
+            ]
+            import re as _lsp_re
+            for line_no, line_text in enumerate(text.splitlines()):
+                for pattern, message, code in _ANTIPATTERNS:
+                    if _lsp_re.search(pattern, line_text):
+                        col = line_text.find(line_text.lstrip())
+                        diagnostics.append({
+                            "range": {
+                                "start": {"line": line_no, "character": col},
+                                "end": {"line": line_no, "character": len(line_text.rstrip())}
+                            },
+                            "severity": 2,  # Warning
+                            "message": f"[PyReact Hint] {message}",
+                            "source": "pyreact",
+                            "code": code
+                        })
+                        break  # one warning per line
         except ParseError as e:
             line = max(0, e.line - 1)
             col = max(0, e.col - 1)

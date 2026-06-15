@@ -1,0 +1,86 @@
+# PyReact — Cursor IDE Rules
+
+You are working with PyReact, a Python-powered fullstack language. Files use `.pyreact` extension.
+
+## CRITICAL RULES
+- NEVER write raw React JSX, Flask Python, or HTML/CSS files
+- ALWAYS use `.pyreact` syntax inside `.pyreact` files
+- ALWAYS use `server.funcName()` for API calls — NEVER use `fetch()` or `axios`
+- ALWAYS use `use_state` (snake_case) — NEVER `useState` (camelCase)
+- ALWAYS use `use_effect` (snake_case) — NEVER `useEffect` (camelCase)
+- ALWAYS use `None` not `null`, `True`/`False` not `true`/`false`
+- Component names MUST be PascalCase (start with uppercase)
+
+## BLOCK SYNTAX
+- `server { }` — Backend Python functions (brace syntax)
+- `component Name():` — UI component (indent syntax, NOT braces)
+- `style { }` — Design tokens (brace syntax)
+- `pages { }` — Routing definitions (brace syntax)
+- `shared_state { }` — Global state (brace syntax)
+- `database { }` — ORM config (brace syntax)
+- `dependencies { }` — Package list (brace syntax)
+- `middleware { }` — Request interceptors (brace syntax)
+
+## COMPONENT PATTERN
+```python
+component MyComponent():
+    value, setValue = use_state("")
+    loading, setLoading = use_state(False)
+
+    def handleSubmit():
+        setLoading(True)
+        result = server.process_data(value)
+        setValue(result)
+        setLoading(False)
+
+    return (
+        <UI.Page>
+            <UI.Navbar title="My App" />
+            <div className="pt-24 max-w-xl mx-auto px-4">
+                <UI.Card title="Form">
+                    <UI.Input label="Value" value={value} onChange={setValue} />
+                    <UI.Button onClick={handleSubmit} loading={loading}>Submit</UI.Button>
+                </UI.Card>
+            </div>
+        </UI.Page>
+    )
+```
+
+## SERVER PATTERN
+```python
+server {
+    def get_items():
+        return {"items": [{"id": 1, "name": "Item 1"}]}
+
+    def create_item(name: str):
+        return {"status": "success", "id": 2}
+}
+```
+
+## UI COMPONENTS
+Layout: Page, Navbar, Sidebar, Dashboard
+Data: Card, MetricCard, Table, DataGrid, Badge, Text, Heading, Divider
+Forms: Button (variant: primary|secondary|danger|ghost), Input, TextArea, Select, Upload
+Feedback: Alert (type: info|success|error|warning), Toast, Spinner, Modal
+Navigation: Tabs, Dropdown, Accordion
+Advanced: Chart (type: bar|line), Calendar, Chatbot, NetworkStatus, useAuth
+
+## ROUTING
+```python
+pages {
+    Home = "/"
+    Dashboard = "/dashboard" [guard]
+}
+```
+
+## STATE HOOKS
+- `value, setValue = use_state(initial)` — local state
+- `use_effect(def(): ..., [deps])` — side effects
+- `shared.varName` — access shared_state variables
+
+## COMMON MISTAKES TO AVOID
+- `component Name { }` → WRONG, use `component Name():`
+- `const [x, setX] = useState(0)` → WRONG, use `x, setX = use_state(0)`
+- `fetch("/api/x")` → WRONG, use `server.x()`
+- `null` → WRONG, use `None`
+- `true`/`false` → WRONG, use `True`/`False`
